@@ -52,6 +52,8 @@ button, a, input, summary { outline-offset: 4px; }
 .button.tonal { background: var(--primary-soft); color: var(--on-soft); }
 .button.outlined { border-color: var(--line); color: var(--primary); background: var(--surface); }
 .button.text-button { color: var(--primary); padding-inline: 12px; }
+.button.danger-text { color: var(--error); }
+.button.danger-text:hover { background: var(--error-soft); box-shadow: none; }
 .button.danger { background: var(--error); color: #fff; }
 .icon-button { width: 42px; height: 42px; display: inline-grid; place-items: center; border: 0; border-radius: 50%; color: var(--muted); background: transparent; }
 .icon-button:hover { background: var(--container); }

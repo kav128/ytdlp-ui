@@ -17,7 +17,7 @@ export default function DownloadCard({ download, pending, onRetry, onCancel, onH
     {download.errorCode && <div className="download-error"><Icon name="info" /><div><p>{errorLabel(download.errorCode)}</p>{download.error && <details><summary>{messages.errorDetails}</summary><p>{download.error}</p></details>}</div></div>}
     <div className="card-actions">
       <button className="button text-button history-button" onClick={onHistory}>{messages.history}</button>
-      {download.allowedActions.includes('cancel') && <button className="button text-button" onClick={onCancel} disabled={pending}>{messages.cancelDownload}</button>}
+      {download.allowedActions.includes('cancel') && <button className="button text-button danger-text" onClick={onCancel} disabled={pending}>{messages.cancelDownload}</button>}
       {download.allowedActions.includes('retry') && <button className="button tonal" onClick={onRetry} disabled={pending}><Icon name="retry" />{pending ? messages.working : messages.retry}</button>}
     </div>
   </article>;
