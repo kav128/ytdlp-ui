@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ytdlp.Ui/Ytdlp.Ui.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj" />
+  </Folder>
+</Solution>

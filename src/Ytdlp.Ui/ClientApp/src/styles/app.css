@@ -1,0 +1,45 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color-scheme: light dark;
+  color: #1d1b20;
+  background: #f7f2fa;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: clamp(1rem, 5vw, 3rem);
+  min-width: 240px;
+}
+
+.hello-card {
+  max-width: 48rem;
+  margin-inline: auto;
+  padding: clamp(1.5rem, 5vw, 3rem);
+  border-radius: 1.75rem;
+  background: #eaddff;
+  color: #21005d;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 7vw, 3.5rem);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #e6e0e9;
+    background: #141218;
+  }
+
+  .hello-card {
+    color: #eaddff;
+    background: #4f378b;
+  }
+}

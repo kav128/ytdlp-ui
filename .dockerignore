@@ -1,0 +1,13 @@
+.git
+.tools
+.vs
+.idea
+**/bin
+**/obj
+**/node_modules
+src/Ytdlp.Ui/wwwroot
+artifacts
+TestResults
+data
+**/*.db*
+.env*

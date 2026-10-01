@@ -1,0 +1,107 @@
+name: .NET
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: src/Ytdlp.Ui/ClientApp/package-lock.json
+      - name: Restore dependencies
+        run: dotnet restore Ytdlp.Ui.slnx
+
+      - name: Build
+        run: dotnet build Ytdlp.Ui.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj -c Release --no-build --verbosity normal
+
+      - name: Test React
+        run: npm test
+        working-directory: src/Ytdlp.Ui/ClientApp
+      - name: Verify both publish modes and frontend output
+        shell: bash
+        run: |
+          dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-build -o artifacts/publish-no-build
+          dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-restore -o artifacts/publish
+          for directory in artifacts/publish artifacts/publish-no-build; do
+            test -s "$directory/wwwroot/index.html"
+            find "$directory/wwwroot/assets" -name '*.js' | grep -q .
+            test ! -d "$directory/ClientApp"
+          done
+
+  docker:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ytdlp-ui
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Version
+        id: get-version
+        run: echo "version=$(git show --no-patch --format=%ad --date=format:'%Y.%-m.%-d' HEAD).${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+        env:
+          TZ: Europe/Moscow
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to the Container registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get image name
+        id: get-image-name
+        shell: bash
+        run: echo "image-name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.get-image-name.outputs.image-name }}
+          tags: type=raw,value=${{ steps.get-version.outputs.version }}
+          flavor: latest=false
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          platforms: linux/amd64,linux/arm64
+          context: .
+          file: Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
