@@ -5,7 +5,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <Content Remove="ClientApp/**" />
+    <Content Remove="wwwroot/**" />
     <None Remove="ClientApp/node_modules/**" />
   </ItemGroup>
 
@@ -23,7 +25,7 @@
     <Exec WorkingDirectory="$(ClientAppDirectory)" Command="$(NpmCommand) run build" />
   </Target>
 
-  <Target Name="CollectFrontendContent" BeforeTargets="AssignTargetPaths"
+  <Target Name="CollectFrontendContent" BeforeTargets="AssignTargetPaths;ResolveProjectStaticWebAssets"
           DependsOnTargets="BuildFrontend" Condition="'$(DesignTimeBuild)' != 'true'">
     <ItemGroup>
       <Content Remove="wwwroot/**" />

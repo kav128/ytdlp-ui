@@ -63,6 +63,6 @@ public class HelloApplicationTests
         Assert.That(scriptPath, Is.Not.Empty);
         using var scriptResponse = await client.GetAsync(scriptPath);
         Assert.That(scriptResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(await scriptResponse.Content.ReadAsStringAsync(), Does.Contain("Hello World"));
+        Assert.That(await scriptResponse.Content.ReadAsStringAsync(), Does.Contain("Demo workspace"));
     }
 }
