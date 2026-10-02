@@ -14,7 +14,7 @@ TestResults/
 .env
 .env.*
 !.env.example
-data/
+/data/
 *.db
 *.db-shm
 *.db-wal
