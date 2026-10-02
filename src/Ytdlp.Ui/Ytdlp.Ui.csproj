@@ -1,14 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <NpmCommand Condition="'$(NpmCommand)' == ''">npm</NpmCommand>
-    <ClientAppDirectory>$(MSBuildProjectDirectory)/ClientApp/</ClientAppDirectory>
+    <BuildFrontend Condition="'$(BuildFrontend)' == ''">false</BuildFrontend>
+    <ClientAppDirectory>$(MSBuildProjectDirectory)/../Ytdlp.Ui.Client/</ClientAppDirectory>
+    <FrontendOutputDirectory>$(ClientAppDirectory)dist/</FrontendOutputDirectory>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
-    <Content Remove="ClientApp/**" />
-    <Content Remove="wwwroot/**" />
-    <None Remove="ClientApp/node_modules/**" />
   </ItemGroup>
 
   <Target Name="RestoreFrontendPackages"
@@ -19,22 +18,31 @@
     <Touch Files="$(ClientAppDirectory)node_modules/.install-stamp" AlwaysCreate="true" />
   </Target>
 
-  <Target Name="BuildFrontend" BeforeTargets="PrepareForBuild"
+  <Target Name="BuildFrontend"
           DependsOnTargets="RestoreFrontendPackages"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(NoBuild)' != 'true'">
     <Exec WorkingDirectory="$(ClientAppDirectory)" Command="$(NpmCommand) run build" />
   </Target>
 
+  <Target Name="BuildFrontendIfRequested" BeforeTargets="PrepareForBuild"
+          DependsOnTargets="BuildFrontend"
+          Condition="'$(BuildFrontend)' == 'true' and '$(DesignTimeBuild)' != 'true' and '$(NoBuild)' != 'true'" />
+
   <Target Name="CollectFrontendContent" BeforeTargets="AssignTargetPaths;ResolveProjectStaticWebAssets"
-          DependsOnTargets="BuildFrontend" Condition="'$(DesignTimeBuild)' != 'true'">
+          DependsOnTargets="BuildFrontendIfRequested" Condition="'$(DesignTimeBuild)' != 'true'">
     <ItemGroup>
-      <Content Remove="wwwroot/**" />
-      <Content Include="wwwroot/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <_FrontendFile Include="$(FrontendOutputDirectory)**/*" />
+      <Content Include="@(_FrontendFile)"
+               CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest">
+        <Link>wwwroot/%(_FrontendFile.RecursiveDir)%(_FrontendFile.Filename)%(_FrontendFile.Extension)</Link>
+        <ContentRoot>$(FrontendOutputDirectory)</ContentRoot>
+      </Content>
     </ItemGroup>
   </Target>
 
-  <Target Name="PublishFrontend" AfterTargets="ComputeFilesToPublish">
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')"
-           Text="React build is missing. Run dotnet build before publishing with --no-build." />
+  <Target Name="ValidateFrontendForPublish" BeforeTargets="PrepareForPublish"
+          DependsOnTargets="BuildFrontendIfRequested">
+    <Error Condition="!Exists('$(FrontendOutputDirectory)index.html')"
+           Text="React build is missing. Run npm ci and npm run build in src/Ytdlp.Ui.Client before building/publishing, or use -p:BuildFrontend=true (without --no-build)." />
   </Target>
 </Project>

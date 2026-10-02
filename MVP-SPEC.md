@@ -12,10 +12,10 @@
 
 ## 2. Стек и сборка
 
-- ASP.NET Core 10.0 Web API и React в одном проекте.
+- ASP.NET Core 10.0 Web API и React в одном приложении, с раздельными каталогами исходников и сборками.
 - HTTP API реализуется через ASP.NET Core Minimal API вместо контроллеров.
 - API и фронтенд раздаются через Kestrel.
-- Фронтенд автоматически собирается при `dotnet build` и `dotnet publish`.
+- По умолчанию фронтенд и бэкенд собираются отдельно, включая CI и Dockerfile. Совместная сборка доступна через `dotnet build -p:BuildFrontend=true` или target `BuildFrontend`. Готовый фронтенд включается в `wwwroot` при сборке и публикации .NET; публикация требует предварительной сборки React.
 - Docker-native приложение, multi-stage сборка образа.
 - Поддерживаемые платформы приложения и всех runtime-зависимостей — `linux/amd64` и `linux/arm64`.
 - SQLite через Entity Framework Core для хранения заданий, этапов и истории попыток.
@@ -163,9 +163,11 @@ Bucket общедоступен на чтение; запись и удален�
 │       └── ci.yml
 ├── src/
 │   ├── Directory.Build.props
-│   └── Ytdlp.Ui/
-│       ├── Ytdlp.Ui.csproj
-│       └── ClientApp/
+│   ├── Ytdlp.Ui/
+│   │   └── Ytdlp.Ui.csproj
+│   └── Ytdlp.Ui.Client/
+│       ├── package.json
+│       └── src/
 └── tests/
     ├── Directory.Build.props
     └── Ytdlp.Ui.Tests/
@@ -178,7 +180,7 @@ Bucket общедоступен на чтение; запись и удален�
 
 - В корне находится решение в формате `.slnx`, включающее production- и тестовые проекты.
 - Production-код размещается в `src/`, тестовые проекты — в `tests/`.
-- ASP.NET Core и React остаются в одном проекте приложения: исходники React находятся в `ClientApp/` внутри веб-проекта. Тестовые проекты создаются отдельно.
+- ASP.NET Core и React составляют одно приложение: бэкенд находится в `src/Ytdlp.Ui/`, исходники React — в соседнем `src/Ytdlp.Ui.Client/`, результат его сборки — в `dist/`. Kestrel раздает готовый UI; отдельный сервер фронтенда для развертывания не требуется. Тестовые проекты создаются отдельно.
 
 ### Общие настройки сборки
 
@@ -197,7 +199,7 @@ Bucket общедоступен на чтение; запись и удален�
 - В корне находится `Directory.Packages.props` с включенным Central Package Management (`ManagePackageVersionsCentrally=true`).
 - Версии NuGet-пакетов задаются в нем через `PackageVersion`.
 - Ссылки `PackageReference` в проектах и общих props-файлах не содержат собственных версий.
-- CPM относится к NuGet; зависимости React управляются через `package.json` и lock-файл внутри `ClientApp/`.
+- CPM относится к NuGet; зависимости React управляются через `package.json` и lock-файл внутри `src/Ytdlp.Ui.Client/`.
 
 ### Документация
 
@@ -215,7 +217,7 @@ Bucket общедоступен на чтение; запись и удален�
 
 - Workflow располагается в `.github/workflows/ci.yml` и запускается для push в основную ветку и pull request в нее. Имя основной ветки берется из настроек фактического репозитория.
 - За основу берется [workflow ResultService](https://github.com/Texnokaktus-ProgOlymp/ResultService/blob/master/.github/workflows/dotnet.yml), адаптированный под структуру и зависимости этого проекта.
-- Job `build` восстанавливает зависимости, собирает решение вместе с React, запускает тесты и проверяет публикацию приложения через `dotnet publish`.
+- Job `build` восстанавливает зависимости, собирает React и решение .NET отдельными шагами, запускает тесты и проверяет публикацию приложения через `dotnet publish` с включением готового UI.
 - Job `docker` зависит от успешной `build` через `needs: build` и собирает образ из корневого multi-stage `Dockerfile` с помощью Docker Buildx.
 - Docker-сборка выполняется для `platforms: linux/amd64,linux/arm64`. Для выполнения команд целевой архитектуры используются соответствующие runners или QEMU.
 - CI собирает образы для обеих платформ без запуска приложения или smoke-тестов образов. Проверки запуска API, React, SQLite, yt-dlp и FFmpeg выполняются отдельно в подходящем окружении; успешная сборка образа сама по себе не подтверждает работоспособность.

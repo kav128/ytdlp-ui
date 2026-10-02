@@ -40,17 +40,21 @@ src/Ytdlp.Ui/
 │   ├── Media/         # Запуск yt-dlp, FFmpeg, FFprobe
 │   ├── Storage/       # AWSSDK.S3 и локальное рабочее хранилище
 │   └── Authentication/
-├── Configuration/     # Типизированные Options и их валидация
-└── ClientApp/
-    └── src/
-        ├── api/
-        ├── components/
-        ├── features/auth/
-        ├── features/downloads/
-        ├── features/library/
-        ├── locales/en/
-        ├── locales/ru/
-        └── styles/
+└── Configuration/     # Типизированные Options и их валидация
+
+src/Ytdlp.Ui.Client/
+├── package.json
+├── package-lock.json
+├── dist/              # Результат сборки, не коммитится
+└── src/
+    ├── api/
+    ├── components/
+    ├── features/auth/
+    ├── features/downloads/
+    ├── features/library/
+    ├── locales/en/
+    ├── locales/ru/
+    └── styles/
 ```
 
 Согласован ASP.NET Core Minimal API. Регистрация endpoints вынесена в `AuthEndpoints`, `DownloadEndpoints` и `LibraryEndpoints` в соответствующих каталогах `Features/`. В `Program.cs` остаются настройка приложения и вызовы методов регистрации групп маршрутов.
@@ -380,14 +384,15 @@ Options проверяются при запуске. Пустые обязат�
 ### Локальная сборка
 
 - `global.json`, CPM и иерархия props сохраняются по ТЗ. Обработку фронтенда подключает только Web-проект.
-- MSBuild target выполняет `npm ci` при отсутствии или изменении зависимостей и запускает сборку React. Публикация включает результат в `wwwroot`.
+- Основной сценарий: `npm ci` и `npm run build` в `src/Ytdlp.Ui.Client/`, затем отдельные `dotnet build` и `dotnet publish`. Vite создает `dist/` рядом с исходниками фронтенда. MSBuild включает готовые файлы как content с путями `wwwroot/` в результат сборки и публикации, без копирования в исходники бэкенда.
+- Флаг `-p:BuildFrontend=true` явно включает совместную сборку. Target `BuildFrontend` можно вызвать отдельно; он выполняет `npm ci` при отсутствии или изменении зависимостей и запускает React build. По умолчанию .NET не запускает npm и допускает сборку API без UI; publish без готового `dist/index.html` завершается понятной ошибкой. `--no-build` никогда не компилирует React.
 - Реализация targets должна работать из чистого checkout и при `dotnet publish --no-build` после успешного build; статические файлы не должны зависеть от того, существовали ли они до оценки проекта.
 - Frontend outputs, node_modules, bin/obj, локальная БД и рабочие файлы не коммитятся. Общий `.gitignore` создается вместе с каркасом.
 - Точные команды и зависимости описываются в readme после их проверки.
 
 ### Контейнер
 
-Multi-stage Dockerfile: frontend/tooling и .NET build/publish, затем runtime. Финальный образ содержит ASP.NET runtime, статический UI, yt-dlp, FFmpeg/FFprobe и необходимые зависимости для обеих платформ.
+Multi-stage Dockerfile: независимая сборка React в Node.js на платформе сборщика, .NET build/publish с готовым `dist/`, затем runtime. Node.js/npm для компиляции UI не устанавливаются в .NET build stage. Статические файлы React одинаковы для целевых архитектур; нативные зависимости .NET собираются для каждой целевой платформы. Финальный образ MVP содержит ASP.NET runtime, статический UI, yt-dlp, FFmpeg/FFprobe и необходимые зависимости для обеих платформ.
 
 Для поддержки YouTube необходимо включить совместимый JavaScript runtime и yt-dlp-ejs, а не ограничиться только yt-dlp и FFmpeg; версии фиксируются в образе. Это следует из [зависимостей yt-dlp](https://github.com/yt-dlp/yt-dlp#dependencies). Обновление инструментов выполняется пересборкой образа, без автообновления при запуске контейнера.
 
@@ -397,7 +402,7 @@ Multi-stage Dockerfile: frontend/tooling и .NET build/publish, затем runti
 
 Сохраняется схема `build → docker` с тестами перед упаковкой. По согласованному указанию пользователя CI не запускает приложение и smoke-тесты образов; проверки запуска на целевых архитектурах выполняются отдельно.
 
-1. Restore, build, тесты backend/UI, включая интеграционные с Testcontainers на runner с доступным Docker, publish; проверки чистой сборки фронтенда и состава публикации.
+1. Отдельные npm restore/build и .NET restore/build, тесты backend/UI, включая интеграционные с Testcontainers на runner с доступным Docker, publish; проверки состава публикации и совпадения `wwwroot` с готовым `dist/`.
 2. Сборка AMD64 и ARM64 через Buildx/QEMU без запуска полученных образов.
 3. После успешных проверок build job и сборки обеих платформ — публикация образа с объединенным manifest list под общим календарным тегом.
 4. Для PR — те же проверки и сборка образов без входа в GHCR и публикации.

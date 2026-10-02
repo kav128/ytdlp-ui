@@ -1,6 +1,6 @@
 # yt-dlp WebUI
 
-Приложение из [MVP-SPEC.md](MVP-SPEC.md): ASP.NET Core 10 Minimal API и React в одном веб-проекте. Kestrel раздает API и собранный интерфейс с одного адреса.
+Приложение из [MVP-SPEC.md](MVP-SPEC.md): ASP.NET Core 10 Minimal API и React с отдельными каталогами и сборками. Kestrel раздает API и собранный интерфейс с одного адреса.
 
 Сейчас реализован UI с моковым бэкендом: публичная библиотека, вход администратора, очередь и история загрузок, создание по URL, повтор, отмена и удаление файла. Интерфейс следует Material 3, адаптируется к телефону и десктопу, выбирает системную тему и язык EN/RU по браузеру. Форма входа открывается справа сверху на десктопе; административные функции появляются на той же странице после проверки входа.
 
@@ -31,8 +31,11 @@ src/
     Infrastructure/{Data,Media,Storage,Authentication}/
     Infrastructure/Mocking/
     Configuration/
-    ClientApp/
-      src/{api,components,features,locales,styles,test}/
+  Ytdlp.Ui.Client/
+    package.json
+    package-lock.json
+    src/{api,components,features,locales,styles,test}/
+    dist/  # результат сборки, не коммитится
 tests/
   Directory.Build.props
   Ytdlp.Ui.Tests/
@@ -40,11 +43,13 @@ tests/
 
 ## Сборка и запуск
 
-Требуются .NET SDK **10.0.401**, Node.js **24.19.0** и npm в `PATH`. SDK строго зафиксирован в `global.json`; CI и Docker используют ту же версию. NuGet-зависимости управляются через CPM; `NuGet.Config` ограничивает источники публичным `nuget.org`, чтобы сборка не зависела от пользовательских feeds. Зависимости React фиксируются в `ClientApp/package-lock.json`.
+Для сборки всего приложения требуются .NET SDK **10.0.401**, Node.js **24.19.0** и npm в `PATH`. Для отдельной сборки API Node.js/npm не нужны. SDK строго зафиксирован в `global.json`; CI и Docker используют ту же версию. NuGet-зависимости управляются через CPM; `NuGet.Config` ограничивает источники публичным `nuget.org`, чтобы сборка не зависела от пользовательских feeds. Зависимости React фиксируются в `src/Ytdlp.Ui.Client/package-lock.json`.
 
 Из корня репозитория:
 
 ```powershell
+npm --prefix src/Ytdlp.Ui.Client ci --no-audit --no-fund
+npm --prefix src/Ytdlp.Ui.Client run build
 dotnet restore Ytdlp.Ui.slnx
 dotnet build Ytdlp.Ui.slnx -c Release --no-restore
 dotnet run --project src/Ytdlp.Ui -c Release --no-build
@@ -52,9 +57,17 @@ dotnet run --project src/Ytdlp.Ui -c Release --no-build
 
 Открыть `http://localhost:5080/`. Профиль запуска использует локальный HTTP без настройки сертификатов.
 
-При `dotnet build` MSBuild автоматически выполняет `npm ci`, если зависимости отсутствуют или изменился манифест/lock-файл, затем проверку TypeScript и сборку Vite. Результат находится в `src/Ytdlp.Ui/wwwroot/` и не коммитится. Отдельно собирать фронтенд не требуется.
+По умолчанию `dotnet build` и `dotnet publish` не вызывают npm. React собирается отдельно: TypeScript проверяет типы, Vite создает `src/Ytdlp.Ui.Client/dist/`. MSBuild включает готовые файлы в `wwwroot` результата сборки и публикации; в каталог исходников бэкенда они не копируются. Сборка только API допускается без `dist`, но публикация требует готовый UI. После изменения React сначала пересоберите фронтенд, затем .NET.
 
-Для разработки React с обновлением страницы можно дополнительно запустить `npm run dev` в `src/Ytdlp.Ui/ClientApp/`. Vite проксирует `/api` на локальный бэкенд `http://localhost:5080`.
+Совместная сборка включается явно:
+
+```powershell
+dotnet build Ytdlp.Ui.slnx -c Release -p:BuildFrontend=true
+```
+
+В этом режиме MSBuild выполняет `npm ci`, если зависимости отсутствуют или изменился манифест/lock-файл, затем сборку React. Только фронтенд можно собрать через `dotnet build src/Ytdlp.Ui/Ytdlp.Ui.csproj -t:BuildFrontend`; это не компилирует бэкенд.
+
+Для разработки React с обновлением страницы можно запустить `npm --prefix src/Ytdlp.Ui.Client run dev`. Vite проксирует `/api` на локальный бэкенд `http://localhost:5080`. При работе через Vite бэкенд можно собрать без UI.
 
 ## API
 
@@ -85,10 +98,10 @@ dotnet run --project src/Ytdlp.Ui -c Release --no-build
 dotnet test tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj -c Release --no-build
 ```
 
-После сборки решения запустить UI-тесты из `src/Ytdlp.Ui/ClientApp/`:
+После установки npm-зависимостей запустить UI-тесты из корня:
 
 ```powershell
-npm test
+npm --prefix src/Ytdlp.Ui.Client test
 ```
 
 NUnit-тесты используют встроенный `WebApplicationFactory`/TestServer без отдельного процесса сервера, контейнеров и хранилищ. Проверяются контракт API, выдача файлов, ограничения доступа, отзыв JWT, запрет токенов в cookie/query, дубликаты URL, история после удаления и запрет отмены очистки до и после повтора. Проверки страницы React и доступности собранного JavaScript также сохранены. NSubstitute включен в общие зависимости тестов для будущих заглушек внешних компонентов.
@@ -104,7 +117,9 @@ dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-restore -o artifacts
 dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-build -o artifacts/publish-no-build
 ```
 
-Первая команда собирает приложение вместе с React. Вторая использует результат предыдущей Release-сборки и не запускает npm. Оба варианта включают `wwwroot/index.html` и собранные CSS/JS; исходники `ClientApp` и `node_modules` не публикуются. `--no-build` требует предварительного `dotnet build` с той же конфигурацией.
+Обе команды используют предварительно собранный `src/Ytdlp.Ui.Client/dist/` и не запускают npm. Первая компилирует .NET, вторая использует предыдущую Release-сборку. Оба варианта включают `wwwroot/index.html` и собранные CSS/JS; исходники React и `node_modules` не публикуются. `--no-build` требует предварительного `dotnet build` с той же конфигурацией и актуальным `dist/`. При отсутствии готового UI публикация завершается ошибкой с подсказкой.
+
+Совместная компиляция и публикация также доступны: `dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release -p:BuildFrontend=true -o artifacts/publish`. С `--no-build` React не компилируется даже при указанном флаге.
 
 Запуск опубликованного приложения из его каталога:
 
@@ -124,7 +139,7 @@ dotnet Ytdlp.Ui.dll --urls http://localhost:5080
 
 ## Docker и CI
 
-Dockerfile содержит этапы Node.js, сборки .NET и ASP.NET runtime. Сборка React выполняется через тот же `dotnet publish`. Финальный контейнер запускается непривилегированным пользователем и слушает порт 8080. Медиазависимости и вспомогательный MinIO в Compose будут добавлены при реализации соответствующих компонентов.
+Dockerfile содержит независимые этапы сборки React в Node.js и сборки .NET, затем ASP.NET runtime. Готовый `dist/` передается в этап .NET перед публикацией; Node.js/npm для сборки UI в этом этапе не нужны. Статический UI собирается на платформе сборщика и используется для обеих целевых архитектур. Финальный контейнер запускается непривилегированным пользователем и слушает порт 8080. Медиазависимости и вспомогательный MinIO в Compose будут добавлены при реализации соответствующих компонентов.
 
 Команды для окружения с Docker:
 
@@ -137,10 +152,10 @@ docker buildx build --platform linux/amd64,linux/arm64 --output type=oci,dest=ar
 
 CI запускается на push и pull request в `master`. Общие шаги оформлены по [workflow ResultService](https://github.com/Texnokaktus-ProgOlymp/ResultService/blob/master/.github/workflows/dotnet.yml): Setup .NET, Restore dependencies, Build, Test, Version, QEMU, Buildx, вход в реестр, metadata и Build and push Docker image. Дополнительно настроены Node.js, тесты React и проверка публикации.
 
-Job `build` собирает решение, выполняет тесты без внешних сервисов и проверяет оба варианта публикации. Job `docker` после него собирает `linux/amd64,linux/arm64` через Buildx/QEMU. Приложение и готовые контейнеры в CI не запускаются; smoke-тестов образов нет. При push в `master` образ публикуется в `ghcr.io/<repository-owner>/ytdlp-ui`; для PR вход в GHCR и публикация отключены. Проверка запуска на целевых архитектурах выполняется отдельно.
+Job `build` отдельно восстанавливает зависимости и собирает React, затем собирает .NET, выполняет тесты без внешних сервисов и проверяет оба варианта публикации. Содержимое `wwwroot` сравнивается с готовым `dist`. Job `docker` после него собирает `linux/amd64,linux/arm64` через Buildx/QEMU. Приложение и готовые контейнеры в CI не запускаются; smoke-тестов образов нет. При push в `master` образ публикуется в `ghcr.io/<repository-owner>/ytdlp-ui`; для PR вход в GHCR и публикация отключены. Проверка запуска на целевых архитектурах выполняется отдельно.
 
 Тег имеет вид `YYYY.M.D.<github.run_number>`: дата берется из даты коммита в `Europe/Moscow`. Имя образа приводится к нижнему регистру; теги и OCI labels формирует Docker metadata action. Автоматический деплой не настроен.
 
-**Проверено локально:** сборка Release, NUnit и Vitest, обычная публикация и публикация с `--no-build`, наличие UI в публикации; вход, восстановление сессии, создание задания и фокус диалогов в браузере; мобильная ширина 390 px без горизонтального скролла. Workflow проверен через actionlint, Compose — через `docker compose config --quiet`.
+**Проверено локально:** раздельная сборка React и .NET Release без вызова npm из .NET, сборка API без готового UI, совместная сборка по флагу `BuildFrontend=true` и отдельный target `BuildFrontend`, отказ публикации без UI; NUnit и Vitest; обычная публикация и публикация с `--no-build`, совпадение файлов UI с `dist`. Ранее проверены вход, восстановление сессии, создание задания и фокус диалогов в браузере; мобильная ширина 390 px без горизонтального скролла. Workflow проверен через actionlint, Compose — через `docker compose config --quiet`.
 
 **Не проверено локально:** сборка и запуск Docker-образов на AMD64/ARM64 и выполнение workflow на GitHub Actions. Docker daemon недоступен. Запуск приложения в CI отключён по указанию пользователя.

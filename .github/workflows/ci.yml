@@ -24,7 +24,15 @@ jobs:
         with:
           node-version: 24.19.0
           cache: npm
-          cache-dependency-path: src/Ytdlp.Ui/ClientApp/package-lock.json
+          cache-dependency-path: src/Ytdlp.Ui.Client/package-lock.json
+      - name: Restore React dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: src/Ytdlp.Ui.Client
+
+      - name: Build React
+        run: npm run build
+        working-directory: src/Ytdlp.Ui.Client
+
       - name: Restore dependencies
         run: dotnet restore Ytdlp.Ui.slnx
 
@@ -36,7 +44,7 @@ jobs:
 
       - name: Test React
         run: npm test
-        working-directory: src/Ytdlp.Ui/ClientApp
+        working-directory: src/Ytdlp.Ui.Client
       - name: Verify both publish modes and frontend output
         shell: bash
         run: |
@@ -45,7 +53,11 @@ jobs:
           for directory in artifacts/publish artifacts/publish-no-build; do
             test -s "$directory/wwwroot/index.html"
             find "$directory/wwwroot/assets" -name '*.js' | grep -q .
+            while IFS= read -r -d '' asset; do
+              cmp "$asset" "$directory/wwwroot/${asset#src/Ytdlp.Ui.Client/dist/}"
+            done < <(find src/Ytdlp.Ui.Client/dist -type f -print0)
             test ! -d "$directory/ClientApp"
+            test ! -d "$directory/node_modules"
           done
 
   docker:

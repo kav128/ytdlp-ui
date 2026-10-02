@@ -11,9 +11,9 @@
 
 ## Архитектура
 
-- ASP.NET Core 10.0 Web API и React должны находиться в одном проекте приложения. Kestrel раздает API и собранный UI.
+- ASP.NET Core 10.0 Web API и React составляют одно приложение с раздельными каталогами исходников и сборками. Kestrel раздает API и собранный UI.
 - Реализуй HTTP API через Minimal API. Группируй endpoints по функциональным областям в `Features/`, а в `Program.cs` вызывай методы их регистрации. Обработчики отвечают за HTTP-контракт и вызывают сервисы; бизнес-логику и управление фоновыми заданиями держи в соответствующих компонентах.
-- Сборка React автоматически выполняется при `dotnet build` и `dotnet publish`; отдельная ручная сборка фронтенда не должна быть обязательной.
+- По умолчанию React и .NET собираются отдельно, включая CI и Dockerfile. Совместная сборка через `dotnet build` доступна явно по флагу `-p:BuildFrontend=true` или target `BuildFrontend`. Публикация включает готовый фронтенд в `wwwroot`.
 - Храни задания, состояния этапов и историю попыток в SQLite через Entity Framework Core. Изменения схемы оформляй миграциями.
 - Для взаимодействия с MinIO используй официальный пакет `AWSSDK.S3`.
 - Выполняй длительные загрузки в фоновом обработчике. HTTP-запрос постановки задания не должен ждать окончания загрузки.
@@ -22,7 +22,7 @@
 ## Структура репозитория и сборка
 
 - Соблюдай целевую структуру из `MVP-SPEC.md`: корневое решение `Ytdlp.Ui.slnx`, production-код в `src/`, тестовые проекты в `tests/`, GitHub Actions в `.github/workflows/`.
-- Размещай React в `ClientApp/` внутри веб-проекта `src/Ytdlp.Ui/`; сохраняй единый проект приложения и отдельные тестовые проекты.
+- Размещай React в `src/Ytdlp.Ui.Client/`, бэкенд — в `src/Ytdlp.Ui/`; сохраняй один Web-проект, единый контейнер приложения и отдельные тестовые проекты. Результат сборки React хранится в `src/Ytdlp.Ui.Client/dist/` и не коммитится.
 - Добавляй новые production- и тестовые проекты в корневое `.slnx`-решение.
 - Фиксируй .NET SDK в `global.json` и согласуй его с CI и Docker. Тип SDK (`Microsoft.NET.Sdk.Web` или `Microsoft.NET.Sdk`) задавай в `.csproj`.
 - Выноси общие свойства компиляции в корневой `Directory.Build.props`: `TargetFramework=net10.0`, явный `LangVersion`, `Nullable=enable`, `ImplicitUsings` и другие общие настройки. Не используй `latest` или `preview` для версии языка.
@@ -32,7 +32,7 @@
 - Используй NUnit и NSubstitute для .NET-тестов. Общие `PackageReference` тестовых проектов, включая тестовый SDK и адаптер, выноси в `tests/Directory.Build.props`; не подключай их к production-проектам.
 - Используй Testcontainers for .NET для контейнерных интеграционных тестов, прежде всего MinIO. Подключай пакет только нужным тестовым проектам, версию задавай через CPM. Изолируй тестовые данные, используй динамические порты, ожидание готовности и освобождение ресурсов; не обращайся к пользовательскому MinIO. SQLite проверяй на настоящей временной файловой БД с миграциями.
 - Используй Central Package Management: `ManagePackageVersionsCentrally=true` и версии всех NuGet-пакетов через `PackageVersion` в корневом `Directory.Packages.props`. Не дублируй версии в `PackageReference` проектов или props-файлов.
-- Зависимости React веди отдельно в `package.json` и lock-файле внутри `ClientApp/`.
+- Зависимости React веди отдельно в `package.json` и lock-файле внутри `src/Ytdlp.Ui.Client/`.
 - Поддерживай workflow в `.github/workflows/ci.yml`: job `build` выполняет сборку, тесты и проверку `dotnet publish`; job `docker` с `needs: build` собирает образ через Buildx и публикует его в GHCR.
 - При push в основную ветку публикуй образ `ghcr.io/<repository-owner>/ytdlp-ui`; приводь имя к нижнему регистру. Для pull request выполняй проверки и сборку образа без входа в GHCR и без публикации.
 - Используй для входа в GHCR `github.actor` и `GITHUB_TOKEN`. Выдавай `packages: write` только job публикации; для чтения репозитория используй `contents: read`.

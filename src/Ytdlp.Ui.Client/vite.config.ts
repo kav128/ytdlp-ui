@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: '../wwwroot',
+    outDir: 'dist',
     emptyOutDir: true,
   },
   server: {

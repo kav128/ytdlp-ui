@@ -5,7 +5,7 @@
 **/bin
 **/obj
 **/node_modules
-src/Ytdlp.Ui/wwwroot
+src/Ytdlp.Ui.Client/dist
 artifacts
 TestResults
 data
