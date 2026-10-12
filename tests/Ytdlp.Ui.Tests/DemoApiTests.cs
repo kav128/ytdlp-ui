@@ -16,7 +16,7 @@ public class DemoApiTests
     [SetUp]
     public void SetUp()
     {
-        factory = new WebApplicationFactory<Program>();
+        factory = new TestApplicationFactory();
         client = factory.CreateClient();
     }
 

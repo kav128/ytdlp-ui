@@ -10,6 +10,11 @@ builder.Services.AddAppDatabase(builder.Configuration);
 builder.Services.AddDemoBackend(builder.Configuration);
 var app = builder.Build();
 
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    await scope.ServiceProvider.GetRequiredService<AppDbContext>().InitializeAsync();
+}
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseDefaultFiles();

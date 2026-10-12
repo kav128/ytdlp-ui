@@ -3,3 +3,8 @@ services:
     build: .
     ports:
       - "5080:8080"
+    volumes:
+      - app-data:/data
+
+volumes:
+  app-data:
