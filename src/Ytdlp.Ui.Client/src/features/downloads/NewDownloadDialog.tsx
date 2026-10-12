@@ -4,9 +4,10 @@ import Icon from '../../components/Icon';
 import { api, ApiError } from '../../api/client';
 import { messages } from '../../locales';
 import { errorLabel } from '../../locales/format';
+import type { AuthenticatedRequest } from '../auth/useAuth';
 
-export default function NewDownloadDialog({ token, onClose, onCreated, unauthorized }: {
-  token: string; onClose: () => void; onCreated: () => void; unauthorized: (error: unknown, token: string) => void;
+export default function NewDownloadDialog({ sessionId, authorized, onClose, onCreated, unauthorized }: {
+  sessionId: string; authorized: AuthenticatedRequest; onClose: () => void; onCreated: () => void; unauthorized: (error: unknown, token: string) => void;
 }) {
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
@@ -16,8 +17,8 @@ export default function NewDownloadDialog({ token, onClose, onCreated, unauthori
     try { const parsed = new URL(url.trim()); if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error(); }
     catch { setError(errorLabel('invalid_url')); return; }
     setPending(true);
-    try { await api.create(url.trim(), token); onCreated(); }
-    catch (error) { unauthorized(error, token); setError(errorLabel(error instanceof ApiError ? error.code : 'request_failed')); }
+    try { await authorized(token => api.create(url.trim(), token), sessionId); onCreated(); }
+    catch (error) { unauthorized(error, sessionId); setError(errorLabel(error instanceof ApiError ? error.code : 'request_failed')); }
     finally { setPending(false); }
   }
   return <Dialog title={messages.newDownloadTitle} onClose={() => { if (!pending) onClose(); }}>

@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.EventLog;
 
 namespace Ytdlp.Ui.Tests;
 
@@ -26,6 +28,10 @@ public sealed class TestApplicationFactory : WebApplicationFactory<Program>
         builder.UseSetting("ConnectionStrings:AppDatabase",
             new SqliteConnectionStringBuilder { DataSource = _databasePath }.ToString());
         builder.ConfigureServices(services => services.AddDataProtection().UseEphemeralDataProtectionProvider());
+        builder.ConfigureLogging(logging =>
+        {
+            if (OperatingSystem.IsWindows()) logging.AddFilter<EventLogLoggerProvider>(_ => false);
+        });
     }
 
     protected override void Dispose(bool disposing)

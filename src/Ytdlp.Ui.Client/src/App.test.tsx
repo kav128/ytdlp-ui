@@ -10,7 +10,7 @@ const download: Download = {
   createdAt: '2026-10-01T10:00:00Z', error: 'Demo error', errorCode: 'cleanup_failed', allowedActions: ['retry'],
   attempts: [{ number: 1, state: 'Failed', createdAt: '2026-10-01T10:00:00Z', error: 'Demo error' }],
 };
-const session = { accessToken: 'demo-token', expiresAt: '2026-10-02T10:00:00Z', tokenType: 'Bearer' as const };
+const session = { accessToken: 'demo-token', expiresAt: '2099-10-02T10:00:00Z', tokenType: 'Bearer' as const, refreshToken: 'demo-refresh' };
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -19,6 +19,7 @@ beforeEach(() => {
   vi.spyOn(api, 'session').mockResolvedValue({ authenticated: true });
   vi.spyOn(api, 'logout').mockResolvedValue(undefined);
   vi.spyOn(api, 'login').mockResolvedValue(session);
+  vi.spyOn(api, 'refresh').mockRejectedValue(new ApiError(401, 'unauthorized'));
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -44,7 +45,7 @@ describe('library and administrator workspace', () => {
     expect(screen.getByRole('button', { name: messages.retry })).toBeInTheDocument();
   });
 
-  it('signs in through the dialog, stores only a token and clears private data on logout', async () => {
+  it('signs in through the dialog, stores the token pair and clears private data on logout', async () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: messages.login }));
     const dialog = screen.getByRole('dialog');

@@ -31,12 +31,18 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                     b.Property<long>("IssuedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<byte[]>("RefreshTokenHash")
+                        .HasColumnType("BLOB");
+
                     b.Property<long?>("RevokedAt")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
                     b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("RefreshTokenHash")
+                        .IsUnique();
 
                     b.ToTable("AdminSessions", null, t =>
                         {

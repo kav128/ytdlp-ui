@@ -1,6 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Ytdlp.Ui.Infrastructure.Mocking;
+using Ytdlp.Ui.Infrastructure.Authentication;
 
 namespace Ytdlp.Ui.Features.Auth;
 
@@ -9,6 +9,7 @@ public static class AuthEndpoints
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/auth");
+
         group.MapGet("/session", (HttpContext context) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -16,21 +17,29 @@ public static class AuthEndpoints
                 return Results.Unauthorized();
             return Results.Ok(new { authenticated = context.User.IsInRole("Admin") });
         });
-        group.MapPost("/login", (LoginRequest request, IConfiguration configuration, DemoSessions sessions, HttpContext context) =>
+
+        group.MapPost("/login", async (LoginRequest request, AuthenticationService authentication, HttpContext context) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (request.Username != configuration["Admin:Username"] || request.Password != configuration["Admin:Password"])
-                return Results.Unauthorized();
-            return Results.Ok(DemoAuthentication.IssueToken(configuration, sessions));
+            var tokens = await authentication.LoginAsync(request.Username, request.Password, context.RequestAborted);
+            return tokens is null ? Results.Unauthorized() : Results.Ok(tokens);
         });
-        group.MapPost("/logout", (ClaimsPrincipal user, DemoSessions sessions, HttpContext context) =>
+
+        group.MapPost("/refresh", async (RefreshRequest request, AuthenticationService authentication, HttpContext context) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            sessions.Revoke(user.FindFirstValue(JwtRegisteredClaimNames.Jti)!);
+            var tokens = await authentication.RefreshAsync(request.RefreshToken, context.RequestAborted);
+            return tokens is null ? Results.Unauthorized() : Results.Ok(tokens);
+        });
+
+        group.MapPost("/logout", async (ClaimsPrincipal user, AuthenticationService authentication, HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var id = user.FindFirstValue(JwtRegisteredClaimNames.Jti)!;
+            await authentication.RevokeAsync(id, context.RequestAborted);
             return Results.NoContent();
         }).RequireAuthorization("Admin");
+
         return endpoints;
     }
-
-    public sealed record LoginRequest(string Username, string Password);
 }

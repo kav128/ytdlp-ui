@@ -18,7 +18,8 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                     Id = table.Column<string>(type: "TEXT", nullable: false),
                     IssuedAt = table.Column<long>(type: "INTEGER", nullable: false),
                     ExpiresAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    RevokedAt = table.Column<long>(type: "INTEGER", nullable: true)
+                    RevokedAt = table.Column<long>(type: "INTEGER", nullable: true),
+                    RefreshTokenHash = table.Column<byte[]>(type: "BLOB", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -185,6 +186,12 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 name: "IX_AdminSessions_ExpiresAt",
                 table: "AdminSessions",
                 column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AdminSessions_RefreshTokenHash",
+                table: "AdminSessions",
+                column: "RefreshTokenHash",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_DownloadArtifacts_DownloadId_WorkspaceGeneration_RelativePath",

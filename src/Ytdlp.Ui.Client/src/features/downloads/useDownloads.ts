@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api, type Download } from '../../api/client';
+import type { AuthenticatedRequest } from '../auth/useAuth';
 
-export function useDownloads(token: string | null, revision: number, unauthorized: (error: unknown, token: string) => void) {
+export function useDownloads(token: string | null, revision: number, authorized: AuthenticatedRequest, unauthorized: (error: unknown, token: string) => void) {
   const [result, setResult] = useState<{ token: string; data: Download[] } | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -17,7 +18,7 @@ export function useDownloads(token: string | null, revision: number, unauthorize
       running = true;
       setLoading(true);
       try {
-        const data = await api.downloads(token!, controller.signal);
+        const data = await authorized(accessToken => api.downloads(accessToken, controller.signal), token!);
         if (active) { setResult({ token: token!, data }); setError(false); }
       } catch (error) {
         if (active) { unauthorized(error, token!); setError(true); }
@@ -33,7 +34,7 @@ export function useDownloads(token: string | null, revision: number, unauthorize
     void poll();
     document.addEventListener('visibilitychange', onVisibility);
     return () => { active = false; controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); };
-  }, [token, revision, unauthorized]);
+  }, [token, revision, authorized, unauthorized]);
 
   return { downloads: result?.token === token ? result.data : [], loading, error };
 }

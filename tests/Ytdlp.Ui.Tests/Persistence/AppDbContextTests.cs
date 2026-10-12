@@ -68,6 +68,43 @@ public class AppDbContextTests
     }
 
     [Test]
+    public async Task RefreshHashEqualityAndUniqueIndexCompareByteContentAndAllowNulls()
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData("refresh"u8);
+        await using (var context = CreateContext())
+        {
+            context.AdminSessions.AddRange(
+                new AdminSessionRecord
+                {
+                    Id = "first", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12), RefreshTokenHash = hash
+                },
+                new AdminSessionRecord { Id = "null-first", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12) },
+                new AdminSessionRecord { Id = "null-second", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12) });
+            await context.SaveChangesAsync();
+        }
+
+        var equalHash = hash.ToArray();
+        await using (var reopened = CreateContext())
+        {
+            var stored = await reopened.AdminSessions.SingleAsync(session => session.RefreshTokenHash == equalHash);
+            Assert.That(stored.Id, Is.EqualTo("first"));
+            Assert.That(stored.RefreshTokenHash, Is.EqualTo(equalHash));
+            Assert.That(await reopened.AdminSessions.CountAsync(session => session.RefreshTokenHash == null), Is.EqualTo(2));
+
+            reopened.AdminSessions.Add(new AdminSessionRecord
+            {
+                Id = "duplicate", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12), RefreshTokenHash = equalHash
+            });
+            var exception = await Assert.ThrowsAsync<DbUpdateException>(() => reopened.SaveChangesAsync());
+            Assert.That(exception!.InnerException, Is.TypeOf<SqliteException>());
+            Assert.That(((SqliteException)exception.InnerException!).SqliteErrorCode, Is.EqualTo(19));
+        }
+
+        await using var final = CreateContext();
+        Assert.That(await final.AdminSessions.CountAsync(), Is.EqualTo(3));
+    }
+
+    [Test]
     public async Task AggregateAndRelatedHistorySurviveReopeningTheDatabase()
     {
         Guid downloadId;

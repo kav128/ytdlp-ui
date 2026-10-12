@@ -1,7 +1,10 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Ytdlp.Ui.Infrastructure.Persistence;
-using Ytdlp.Ui.Infrastructure.Persistence.Entities;
+using Ytdlp.Ui.Features.Auth;
 
 namespace Ytdlp.Ui.Tests.Persistence;
 
@@ -48,18 +51,21 @@ public class AppDatabaseStartupTests
     [Test]
     public async Task RestartPreservesExistingDataAndMigrationHistory()
     {
-        var issuedAt = DateTimeOffset.UtcNow;
-        var sessionId = Guid.NewGuid().ToString("N");
+        string token;
+        string refreshToken;
+        string sessionId;
         string[] migrations;
         using (var first = new TestApplicationFactory(_databasePath))
         {
+            using var client = first.CreateClient();
+            using var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "demo-password" });
+            Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            var tokens = (await login.Content.ReadFromJsonAsync<AuthTokens>())!;
+            token = tokens.AccessToken;
+            refreshToken = tokens.RefreshToken;
             await using var scope = first.Services.CreateAsyncScope();
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            context.AdminSessions.Add(new AdminSessionRecord
-            {
-                Id = sessionId, IssuedAt = issuedAt, ExpiresAt = issuedAt.AddHours(1)
-            });
-            await context.SaveChangesAsync();
+            sessionId = (await context.AdminSessions.SingleAsync()).Id;
             migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
         }
 
@@ -69,6 +75,40 @@ public class AppDatabaseStartupTests
         Assert.That((await restored.AdminSessions.SingleAsync()).Id, Is.EqualTo(sessionId));
         Assert.That(await restored.Database.GetAppliedMigrationsAsync(), Is.EqualTo(migrations));
         Assert.That(await restored.Database.GetPendingMigrationsAsync(), Is.Empty);
+        using var restartedClient = restarted.CreateClient();
+        restartedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var session = await restartedClient.GetAsync("/api/auth/session");
+        Assert.That(session.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        restartedClient.DefaultRequestHeaders.Authorization = null;
+        using var refresh = await restartedClient.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
+        Assert.That(refresh.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var next = (await refresh.Content.ReadFromJsonAsync<AuthTokens>())!;
+        restartedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", next.AccessToken);
+        using var logout = await restartedClient.PostAsync("/api/auth/logout", null);
+        Assert.That(logout.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+    }
+
+    [Test]
+    public async Task LogoutRevocationSurvivesRestart()
+    {
+        AuthTokens tokens;
+        using (var first = new TestApplicationFactory(_databasePath))
+        {
+            using var client = first.CreateClient();
+            using var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "demo-password" });
+            tokens = (await login.Content.ReadFromJsonAsync<AuthTokens>())!;
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+            using var logout = await client.PostAsync("/api/auth/logout", null);
+            Assert.That(logout.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+        }
+        using var restarted = new TestApplicationFactory(_databasePath);
+        using var restartedClient = restarted.CreateClient();
+        restartedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        using var access = await restartedClient.GetAsync("/api/downloads");
+        Assert.That(access.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        restartedClient.DefaultRequestHeaders.Authorization = null;
+        using var refresh = await restartedClient.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = tokens.RefreshToken });
+        Assert.That(refresh.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
     [Test]

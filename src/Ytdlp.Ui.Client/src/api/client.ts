@@ -5,7 +5,7 @@ export type Download = {
   progress: number | null; createdAt: string; errorCode: string | null; error: string | null;
   allowedActions: string[]; attempts: Attempt[];
 };
-export type AccessToken = { accessToken: string; expiresAt: string; tokenType: 'Bearer' };
+export type AccessToken = { accessToken: string; expiresAt: string; tokenType: 'Bearer'; refreshToken: string };
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string) { super(code); }
@@ -31,6 +31,7 @@ export async function request<T>(path: string, options: {
 export const api = {
   library: (signal?: AbortSignal) => request<LibraryFile[]>('/library', { signal }),
   login: (username: string, password: string) => request<AccessToken>('/auth/login', { method: 'POST', body: { username, password } }),
+  refresh: (refreshToken: string) => request<AccessToken>('/auth/refresh', { method: 'POST', body: { refreshToken } }),
   session: (token: string, signal?: AbortSignal) => request<{ authenticated: boolean }>('/auth/session', { token, signal }),
   logout: (token: string) => request<void>('/auth/logout', { method: 'POST', token }),
   downloads: (token: string, signal?: AbortSignal) => request<Download[]>('/downloads', { token, signal }),

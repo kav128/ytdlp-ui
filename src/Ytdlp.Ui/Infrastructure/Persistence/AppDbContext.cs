@@ -20,6 +20,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             builder.HasKey(record => record.Id);
             builder.Property(record => record.Id).ValueGeneratedNever();
             builder.HasIndex(record => record.ExpiresAt);
+            builder.HasIndex(record => record.RefreshTokenHash).IsUnique();
         });
 
         modelBuilder.Entity<DownloadArtifactRecord>(builder =>
