@@ -390,7 +390,11 @@ public sealed partial class MediaProcessor(IProcessRunner runner, IOptions<Media
     private static void RequireSuccess(ProcessResult result, string code)
     {
         if (result.ExitCode != 0)
-            throw new MediaProcessingException(code, Url().Replace(result.Diagnostics, "[source URL]"));
+            throw new MediaProcessingException(
+                code,
+                Url().Replace(result.Diagnostics, "[source URL]"),
+                toolDiagnostic: true
+            );
     }
 
     [GeneratedRegex("https?://[^\\s\\\"']+", RegexOptions.IgnoreCase)]

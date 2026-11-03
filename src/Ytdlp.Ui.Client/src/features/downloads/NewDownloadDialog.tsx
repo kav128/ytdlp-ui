@@ -1,4 +1,4 @@
-import {useState, type FormEvent} from 'react';
+import {useEffect, useRef, useState, type FormEvent} from 'react';
 import Dialog from '../../components/Dialog';
 import Icon from '../../components/Icon';
 import {api, ApiError} from '../../api/client';
@@ -16,9 +16,17 @@ export default function NewDownloadDialog({sessionId, authorized, onClose, onCre
     const [url, setUrl] = useState('');
     const [error, setError] = useState('');
     const [pending, setPending] = useState(false);
+    const active = useRef(true), sending = useRef(false);
+    useEffect(() => {
+        active.current = true;
+        return () => {
+            active.current = false;
+        };
+    }, []);
 
     async function submit(event: FormEvent) {
         event.preventDefault();
+        if (sending.current) return;
         setError('');
         try {
             const parsed = new URL(url.trim());
@@ -28,18 +36,20 @@ export default function NewDownloadDialog({sessionId, authorized, onClose, onCre
             return;
         }
         setPending(true);
+        sending.current = true;
         try {
             await authorized(token => api.create(url, token), sessionId);
-            onCreated();
+            if (active.current) onCreated();
         } catch (error) {
             unauthorized(error, sessionId);
-            setError(errorLabel(error instanceof ApiError ? error.code : 'request_failed'));
+            if (active.current) setError(errorLabel(error instanceof ApiError ? error.code : 'request_failed'));
         } finally {
-            setPending(false);
+            sending.current = false;
+            if (active.current) setPending(false);
         }
     }
 
-    return <Dialog title={messages.newDownloadTitle} onClose={() => {
+    return <Dialog title={messages.newDownloadTitle} busy={pending} onClose={() => {
         if (!pending) onClose();
     }}>
         <div className="dialog-symbol"><Icon name="plus"/></div>

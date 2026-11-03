@@ -7,6 +7,8 @@
     "uploadTitle": "Добавить локальный файл",
     "uploadDescription": "Выберите любой файл для публикации в общей библиотеке.",
     "chooseFile": "Файл",
+    "selectFile": "Выбрать файл",
+    "noFileSelected": "Файл не выбран",
     "uploadingFile": "Отправляем файл и подтверждаем публикацию…",
     "fileUploaded": "Файл опубликован в библиотеке.",
     "libraryCaption": "Сохранённые файлы, которые всегда под рукой.",
@@ -36,6 +38,51 @@
     "retry": "Повторить",
     "history": "История",
     "historyTitle": "История загрузки",
+    "currentState": "Текущее состояние",
+    "failedStage": "Проваленный этап",
+    "publication": "Опубликованный файл",
+    "queuedAt": "В очереди с",
+    "startedAt": "Начало",
+    "finishedAt": "Завершение",
+    "stagesTitle": "Этапы",
+    "stageResultRecorded": "Результат этапа сохранён",
+    "reusedFromAttempt": "Использован результат попытки {number}",
+    "reusedResult": "Использован прежний результат",
+    "historyRefreshFailed": "Не удалось обновить историю. Показаны последние подтверждённые данные.",
+    "continuationFallback": "Попытка продолжается с сохранённого этапа.",
+    "explanations": {
+        "media_plan_missing": "Сохранённый план недоступен. Эта попытка восстанавливает скачивание.",
+        "artifacts_unavailable": "Нужный файл утрачен либо изменились его размер или контрольная сумма. Эта попытка восстанавливает самый ранний необходимый этап.",
+        "publication_reconciliation": "Обнаружена прежняя публикация. Эта попытка проверяет её перед повторной отправкой."
+    },
+    "stages": {
+        "Download": "Скачивание",
+        "Prepare": "Подготовка",
+        "Upload": "Отправка",
+        "Cleanup": "Локальная очистка",
+        "DeleteResult": "Удаление публикации",
+        "CancelCleanup": "Очистка при отмене"
+    },
+    "executionStatuses": {
+        "Pending": "Ожидает",
+        "Running": "Выполняется",
+        "Succeeded": "Успешно",
+        "Failed": "Ошибка",
+        "Canceled": "Отменено"
+    },
+    "attemptReasons": {
+        "Initial": "Первое скачивание",
+        "Retry": "Ручной повтор",
+        "RetryDeletedResult": "Скачивание после удаления",
+        "Cancellation": "Отмена",
+        "DeleteResult": "Удаление публикации"
+    },
+    "publicationStates": {
+        "None": "Не опубликован",
+        "Unknown": "Требуется проверка",
+        "Available": "Доступен",
+        "Deleted": "Удалён"
+    },
     "attempt": "Попытка",
     "created": "Создано",
     "resumeFrom": "Продолжить с этапа",

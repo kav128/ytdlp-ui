@@ -64,6 +64,7 @@ public sealed class DownloadQueries(AppDbContext database)
                                                    attempt.StartedAt,
                                                    attempt.FinishedAt,
                                                    attempt.ErrorCode,
+                                                   attempt.ContinuationReasonCode,
                                                    stages[attempt.Id]
                                                       .Select(stage => new DownloadStageView(
                                                                   stage.Id,

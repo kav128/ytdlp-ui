@@ -165,6 +165,7 @@ public sealed partial class MediaWorkerTests : SetupBase
         var created = await CreateAsync("https://example.test/unsupported");
         var failed = await WaitForAsync(created.Id, "Failed");
         Assert.That(failed.ErrorCode, Is.EqualTo(code));
+        Assert.That(failed.Error, Is.Null);
         Assert.That(failed.ResumeState, Is.EqualTo("Downloading"));
         Assert.That(_tools.Commands.Any(command => command.Arguments.Contains("--format")), Is.False);
         Assert.That((await S3.ListObjectsV2Async(new() { BucketName = Bucket })).S3Objects, Is.Null.Or.Empty);

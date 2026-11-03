@@ -7,6 +7,8 @@
     "uploadTitle": "Add a local file",
     "uploadDescription": "Choose any file to publish in the public library.",
     "chooseFile": "File",
+    "selectFile": "Choose file",
+    "noFileSelected": "No file selected",
     "uploadingFile": "Uploading and confirming publication…",
     "fileUploaded": "File published in the library.",
     "libraryCaption": "Saved files, ready whenever you are.",
@@ -36,6 +38,51 @@
     "retry": "Retry",
     "history": "History",
     "historyTitle": "Download history",
+    "currentState": "Current state",
+    "failedStage": "Failed stage",
+    "publication": "Published file",
+    "queuedAt": "Queued",
+    "startedAt": "Started",
+    "finishedAt": "Finished",
+    "stagesTitle": "Stages",
+    "stageResultRecorded": "Stage result recorded",
+    "reusedFromAttempt": "Reused from attempt {number}",
+    "reusedResult": "Reused a previous result",
+    "historyRefreshFailed": "History could not be refreshed. The last confirmed data is shown.",
+    "continuationFallback": "This attempt continues from a saved stage.",
+    "explanations": {
+        "media_plan_missing": "The saved media plan is unavailable. This attempt restores downloading.",
+        "artifacts_unavailable": "A required file is missing or its size/checksum changed. This attempt restores the earliest necessary stage.",
+        "publication_reconciliation": "An existing publication was found. This attempt verifies it before uploading again."
+    },
+    "stages": {
+        "Download": "Download",
+        "Prepare": "Prepare",
+        "Upload": "Upload",
+        "Cleanup": "Local cleanup",
+        "DeleteResult": "Delete published file",
+        "CancelCleanup": "Cancellation cleanup"
+    },
+    "executionStatuses": {
+        "Pending": "Waiting",
+        "Running": "In progress",
+        "Succeeded": "Succeeded",
+        "Failed": "Failed",
+        "Canceled": "Canceled"
+    },
+    "attemptReasons": {
+        "Initial": "Initial download",
+        "Retry": "Manual retry",
+        "RetryDeletedResult": "Download after deletion",
+        "Cancellation": "Cancellation",
+        "DeleteResult": "Delete published file"
+    },
+    "publicationStates": {
+        "None": "Not published",
+        "Unknown": "Verification required",
+        "Available": "Available",
+        "Deleted": "Deleted"
+    },
     "attempt": "Attempt",
     "created": "Created",
     "resumeFrom": "Resume from",

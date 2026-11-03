@@ -127,7 +127,7 @@ public sealed class DownloadWorker(
                 await pipeline.FailAsync(
                     work,
                     "process_stop_unconfirmed",
-                    "Stopping could not be confirmed. Recreate the application container before retrying.",
+                    null,
                     persistence.Token
                 );
             }
@@ -144,7 +144,7 @@ public sealed class DownloadWorker(
             await pipeline.FailAsync(
                 work,
                 "interrupted",
-                "Processing stopped; its files were retained for a manual retry.",
+                null,
                 persistence.Token
             );
 
@@ -193,9 +193,7 @@ public sealed class DownloadWorker(
             }
         };
 
-        var details = error is MediaProcessingException
-                          ? error.Message
-                          : "The stage failed; its files were retained for a manual retry.";
+        var details = error is MediaProcessingException mediaFailure ? mediaFailure.DiagnosticDetails : null;
 
         logger.LogWarning(
             "Download {DownloadId} attempt {AttemptId} failed at {Stage}: {Code}",

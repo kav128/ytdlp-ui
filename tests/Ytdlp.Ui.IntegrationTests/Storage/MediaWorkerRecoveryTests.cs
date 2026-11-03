@@ -16,6 +16,51 @@ namespace Ytdlp.Ui.IntegrationTests.Storage;
 public sealed partial class MediaWorkerTests
 {
     [Test]
+    public async Task ContinuationReasonSurvivesARealLaterFailureWithoutReplacingEitherFailureHistory()
+    {
+        _tools.Metadata = MediaMetadata.Separate;
+        _tools.FailPrepare = true;
+        await OidcBrowser.SignInAsync(Factory, Client);
+        var original = await CreateAsync("https://example.test/continuation-reason");
+        await WaitForAsync(original.Id, "Failed");
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var record = await database.Downloads.SingleAsync();
+            var artifact = await database.Artifacts.SingleAsync(item => item.Kind == ArtifactKind.Video);
+
+            File.Delete(
+                Factory.Services.GetRequiredService<WorkspaceStorage>()
+                       .Resolve(record.Id, record.WorkspaceGeneration, artifact.RelativePath)
+            );
+        }
+
+        using var retry = await Client.PostAsync($"/api/downloads/{original.Id}/retry", null);
+        Assert.That(retry.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        DownloadView failed;
+
+        do
+        {
+            await Task.Delay(25, timeout.Token);
+            failed = (await Client.GetFromJsonAsync<DownloadView>($"/api/downloads/{original.Id}", timeout.Token))!;
+        } while (failed.State != "Failed" || failed.Attempts.Length != 2);
+
+        Assert.That(failed.Attempts[1].ContinuationReasonCode, Is.EqualTo("artifacts_unavailable"));
+        Assert.That(failed.Attempts[1].ErrorCode, Is.EqualTo("prepare_failed"));
+        Assert.That(failed.Attempts[1].Error, Does.StartWith("merge failed").And.Not.Contain("private.test"));
+        Assert.That(failed.Attempts[0].ErrorCode, Is.EqualTo("prepare_failed"));
+        Assert.That(failed.Attempts[0].ContinuationReasonCode, Is.Null);
+        _tools.FailPrepare = false;
+        using var next = await Client.PostAsync($"/api/downloads/{original.Id}/retry", null);
+        Assert.That(next.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        var completed = await WaitForAsync(original.Id, "Completed");
+        Assert.That(completed.Attempts[1].ContinuationReasonCode, Is.EqualTo("artifacts_unavailable"));
+        Assert.That(completed.Attempts[1].ErrorCode, Is.EqualTo("prepare_failed"));
+    }
+
+    [Test]
     public async Task RetryRechecksAnArtifactLostWhileWaitingBehindAnotherJob()
     {
         _tools.PayloadLength = 11 * 1024 * 1024;
@@ -253,6 +298,12 @@ public sealed partial class MediaWorkerTests
         var completed = await WaitForAsync(created.Id, "Completed");
         Assert.That(completed.Attempts, Has.Length.EqualTo(2));
         Assert.That(completed.Attempts[0].Status, Is.EqualTo("Failed"));
+
+        Assert.That(
+            completed.Attempts[1].ContinuationReasonCode,
+            Is.EqualTo(failedWrite == DownloadState.CleaningUp ? "publication_reconciliation" : null)
+        );
+
         Assert.That(_tools.Commands.Count, Is.EqualTo(commands));
         Assert.That(_faults.CompletedCalls, Is.EqualTo(uploads));
     }
@@ -286,7 +337,7 @@ public sealed partial class MediaWorkerTests
         Assert.That(retry.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
         var completed = await WaitForAsync(created.Id, "Completed");
         Assert.That(_tools.Commands.Count(command => command.Arguments.Contains("--format")), Is.EqualTo(3));
-        Assert.That(completed.Attempts[1].Error, Does.Contain("SHA-256"));
+        Assert.That(completed.Attempts[1].ContinuationReasonCode, Is.EqualTo("artifacts_unavailable"));
         Assert.That(completed.Attempts[0].ErrorCode, Is.EqualTo("prepare_failed"));
     }
 

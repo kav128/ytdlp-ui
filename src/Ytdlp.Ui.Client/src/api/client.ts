@@ -1,9 +1,42 @@
 export type LibraryFile = { id: string; name: string; size: number; lastModified: string; contentUrl: string };
-export type Attempt = { number: number; state: string; createdAt: string; error: string | null };
+export type DownloadState =
+    'Queued'
+    | 'Downloading'
+    | 'Preparing'
+    | 'Uploading'
+    | 'CleaningUp'
+    | 'Completed'
+    | 'Failed'
+    | 'Canceling'
+    | 'Canceled'
+    | 'Deleting'
+    | 'Deleted';
+export type ExecutionStatus = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Canceled';
+export type StageName = 'Download' | 'Prepare' | 'Upload' | 'Cleanup' | 'DeleteResult' | 'CancelCleanup';
+export type AttemptReason = 'Initial' | 'Retry' | 'RetryDeletedResult' | 'Cancellation' | 'DeleteResult';
+export type PublicationState = 'None' | 'Unknown' | 'Available' | 'Deleted';
+export type Stage = {
+    id: string;
+    stage: StageName;
+    status: ExecutionStatus;
+    startedAt: string | null;
+    finishedAt: string | null;
+    progress: number | null;
+    errorCode: string | null;
+    error: string | null;
+    artifactId: string | null;
+    reusedFromStageId: string | null;
+};
+export type Attempt = {
+    id: string; number: number; reason: AttemptReason; state: DownloadState; status: ExecutionStatus;
+    initialState: DownloadState; createdAt: string; startedAt: string | null; finishedAt: string | null;
+    errorCode: string | null; continuationReasonCode: string | null; error: string | null; stages: Stage[];
+};
 export type Download = {
-    id: string; url: string; title: string | null; state: string; resumeState: string | null;
+    id: string; url: string; title: string | null; state: DownloadState; resumeState: DownloadState | null;
     progress: number | null; createdAt: string; errorCode: string | null; error: string | null;
-    allowedActions: string[]; attempts: Attempt[];
+    allowedActions: ('retry' | 'cancel')[]; attempts: Attempt[]; currentAttemptId: string; publicationId: string;
+    publicationState: PublicationState; failedState: DownloadState | null; cancelRequested: boolean; version: number;
 };
 export type Session = { authenticated: boolean; sessionId: string | null };
 export type LibraryDeletion = { downloadId: string };

@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useLayoutEffect, useRef, useState} from 'react';
 import {api, ApiError, type Download, type LibraryFile} from './api/client';
 import Dialog from './components/Dialog';
 import Icon from './components/Icon';
@@ -9,6 +9,7 @@ import NewDownloadDialog from './features/downloads/NewDownloadDialog';
 import {useDownloads} from './features/downloads/useDownloads';
 import LibraryList from './features/library/LibraryList';
 import UploadDialog from './features/library/UploadDialog';
+import {useLibrary} from './features/library/useLibrary';
 import {messages} from './locales';
 import {errorLabel, formatNumber, formatSize} from './locales/format';
 
@@ -16,62 +17,33 @@ export default function App() {
     const auth = useAuth();
     const currentSession = useRef(auth.sessionId);
     currentSession.current = auth.sessionId;
-    const [files, setFiles] = useState<LibraryFile[]>([]);
-    const [libraryLoading, setLibraryLoading] = useState(true);
-    const [libraryError, setLibraryError] = useState(false);
     const [revision, setRevision] = useState(0);
     const {
         downloads,
         loading: downloadsLoading,
         error: downloadsError
     } = useDownloads(auth.sessionId, revision, auth.authorized, auth.unauthorized);
+    const publications = downloads.filter(download => ['Available', 'Deleted'].includes(download.publicationState))
+        .map(download => `${download.id}:${download.publicationId}:${download.publicationState}`).sort().join('|');
+    const {files, loading: libraryLoading, error: libraryError} = useLibrary(`${revision}|${publications}`);
     const [modal, setModal] = useState<'create' | 'upload' | null>(null);
     const [deleteFile, setDeleteFile] = useState<LibraryFile | null>(null);
-    const [cancelDownload, setCancelDownload] = useState<Download | null>(null);
-    const [history, setHistory] = useState<Download | null>(null);
+    const [cancelId, setCancelId] = useState<string | null>(null);
+    const cancelDownload = downloads.find(download => download.id === cancelId);
+    const [historyId, setHistoryId] = useState<string | null>(null);
+    const history = downloads.find(download => download.id === historyId);
     const [pending, setPending] = useState<string | null>(null);
     const [notice, setNotice] = useState('');
     const [actionError, setActionError] = useState('');
 
-    useEffect(() => {
-        const controller = new AbortController();
-        let active = true;
-
-        async function load() {
-            setLibraryLoading(true);
-            try {
-                const result = await api.library(controller.signal);
-                if (active) {
-                    setFiles(result);
-                    setLibraryError(false);
-                }
-            } catch {
-                if (active) setLibraryError(true);
-            } finally {
-                if (active) setLibraryLoading(false);
-            }
-        }
-
-        function visibility() {
-            if (!document.hidden) void load();
-        }
-
-        void load();
-        document.addEventListener('visibilitychange', visibility);
-        return () => {
-            active = false;
-            controller.abort();
-            document.removeEventListener('visibilitychange', visibility);
-        };
-    }, [revision]);
-
-    useEffect(() => {
+    useLayoutEffect(() => {
         setDeleteFile(null);
-        setCancelDownload(null);
-        setHistory(null);
+        setCancelId(null);
+        setHistoryId(null);
         setActionError('');
         setPending(null);
         setModal(null);
+        setNotice('');
     }, [auth.sessionId]);
 
     async function act<T>(operation: () => Promise<T>, id: string, success: string | ((result: T) => string)) {
@@ -85,7 +57,7 @@ export default function App() {
             if (currentSession.current !== token) return;
             setNotice(typeof success === 'function' ? success(result) : success);
             setDeleteFile(null);
-            setCancelDownload(null);
+            setCancelId(null);
             setRevision(value => value + 1);
         } catch (error) {
             auth.unauthorized(error, token);
@@ -99,7 +71,7 @@ export default function App() {
     const closeConfirmation = () => {
         if (!pending) {
             setDeleteFile(null);
-            setCancelDownload(null);
+            setCancelId(null);
             setActionError('');
         }
     };
@@ -150,10 +122,10 @@ export default function App() {
                     <div className="download-grid">{downloads.map(download => <DownloadCard key={download.id}
                                                                                             download={download}
                                                                                             pending={pending === download.id}
-                                                                                            onHistory={() => setHistory(download)}
+                                                                                            onHistory={() => setHistoryId(download.id)}
                                                                                             onCancel={() => {
                                                                                                 setActionError('');
-                                                                                                setCancelDownload(download);
+                                                                                                setCancelId(download.id);
                                                                                             }}
                                                                                             onRetry={() => void act(() => auth.authorized(token => api.act(download.id, 'retry', token), auth.sessionId!), download.id, messages.downloadRetried)}/>)}</div>}
             </section>}
@@ -174,15 +146,17 @@ export default function App() {
                     <div className="library-summary"><span><Icon name="library"/>{messages.filesLabel}<span
                         className="count-pill">{formatNumber(files.length)}</span></span><span>{messages.totalSize}<strong>{formatSize(files.reduce((sum, file) => sum + file.size, 0))}</strong></span>
                     </div>
-                    {libraryError ? <div className="empty-state" role="alert"><Icon name="info"/>
+                    {libraryError && <div className="load-error" role="alert"><Icon name="info"/>
                         <p>{messages.errors.request_failed}</p>
                         <button className="button tonal"
                                 onClick={() => setRevision(value => value + 1)}>{messages.retryLoad}</button>
-                    </div> : libraryLoading && files.length === 0 ?
-                        <div className="loading-state" role="status">{messages.loading}</div> : files.length === 0 ?
+                    </div>}
+                    {libraryLoading && files.length === 0 ?
+                        <div className="loading-state"
+                             role="status">{messages.loading}</div> : files.length === 0 && !libraryError ?
                             <div className="empty-state"><Icon name="library"/><h3>{messages.emptyLibrary}</h3>
                                 <p>{messages.emptyLibraryDescription}</p></div> :
-                            <LibraryList files={files} admin={!!auth.sessionId} onDelete={file => {
+                            files.length > 0 && <LibraryList files={files} admin={!!auth.sessionId} onDelete={file => {
                                 setActionError('');
                                 setDeleteFile(file);
                             }}/>}
@@ -192,14 +166,16 @@ export default function App() {
         <footer className="app-footer"><span>{messages.brand}</span><span>{messages.brandCaption}</span></footer>
 
         {modal === 'create' && auth.sessionId &&
-            <NewDownloadDialog sessionId={auth.sessionId} authorized={auth.authorized} onClose={() => setModal(null)}
+            <NewDownloadDialog key={auth.sessionId} sessionId={auth.sessionId} authorized={auth.authorized}
+                               onClose={() => setModal(null)}
                                unauthorized={auth.unauthorized} onCreated={() => {
                 if (currentSession.current !== auth.sessionId) return;
                 setModal(null);
                 setNotice(messages.downloadCreated);
                 setRevision(value => value + 1);
             }}/>}
-        {history && auth.sessionId && <HistoryDialog download={history} onClose={() => setHistory(null)}/>}
+        {history && auth.sessionId &&
+            <HistoryDialog download={history} error={downloadsError} onClose={() => setHistoryId(null)}/>}
         {modal === 'upload' && auth.sessionId && <UploadDialog key={auth.sessionId} sessionId={auth.sessionId}
                                                                authorized={auth.authorized}
                                                                unauthorized={auth.unauthorized}
@@ -210,14 +186,18 @@ export default function App() {
             setRevision(value => value + 1);
         }}/>}
         {(deleteFile || cancelDownload) && auth.sessionId &&
-            <Dialog title={deleteFile ? messages.deleteTitle : messages.cancelTitle} onClose={closeConfirmation}>
+            <Dialog title={deleteFile ? messages.deleteTitle : messages.cancelTitle} onClose={closeConfirmation}
+                    busy={!!pending}>
                 <p className="dialog-description">{deleteFile ? messages.deleteDescription : messages.cancelDescription}</p>
                 <p className="confirmation-name">{deleteFile?.name ?? cancelDownload?.title ?? cancelDownload?.url}</p>
                 {actionError && <p className="form-error" role="alert">{actionError}</p>}
+                {cancelDownload && !cancelDownload.allowedActions.includes('cancel') &&
+                    <p className="form-error" role="alert">{messages.errors.invalid_state}</p>}
                 <div className="dialog-actions">
                     <button className="button text-button" disabled={!!pending}
                             onClick={closeConfirmation}>{messages.cancel}</button>
-                    <button className="button danger" disabled={!!pending}
+                    <button className="button danger"
+                            disabled={!!pending || !!cancelDownload && !cancelDownload.allowedActions.includes('cancel')}
                             onClick={() => void (deleteFile ? act(() => auth.authorized(token => api.deleteFile(deleteFile.id, token), auth.sessionId!), deleteFile.id, result => result?.downloadId ? messages.fileDeleteQueued : messages.fileRemoved) : act(() => auth.authorized(token => api.act(cancelDownload!.id, 'cancel', token), auth.sessionId!), cancelDownload!.id, messages.downloadCanceled))}>
                         <Icon
                             name={deleteFile ? 'trash' : 'close'}/>{pending ? messages.working : deleteFile ? messages.delete : messages.cancelDownload}

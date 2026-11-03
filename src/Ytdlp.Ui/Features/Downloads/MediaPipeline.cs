@@ -529,7 +529,9 @@ public sealed class MediaPipeline(
         previous.StartedAt = null;
         previous.FinishedAt = null;
         previous.ErrorCode = "artifacts_unavailable";
-        previous.ErrorDetails = "Size/SHA-256 validation requires an earlier stage.";
+        previous.ErrorDetails = null;
+        var attempt = await database.Attempts.SingleAsync(item => item.Id == work.AttemptId, cancellationToken);
+        attempt.ContinuationReasonCode = "artifacts_unavailable";
         await StartStageAsync(database, work, resume, cancellationToken);
         await database.SaveChangesAsync(cancellationToken);
     }

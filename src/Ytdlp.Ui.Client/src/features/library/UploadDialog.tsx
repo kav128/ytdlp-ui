@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, type FormEvent} from 'react';
+import {useEffect, useId, useRef, useState, type FormEvent} from 'react';
 import Dialog from '../../components/Dialog';
 import {api, ApiError} from '../../api/client';
 import {messages} from '../../locales';
@@ -15,6 +15,8 @@ export default function UploadDialog({sessionId, authorized, unauthorized, onClo
     const active = useRef(true);
     const sending = useRef(false);
     const controller = useRef<AbortController | null>(null);
+    const input = useRef<HTMLInputElement>(null);
+    const fileId = useId(), nameId = useId();
     useEffect(() => {
         active.current = true;
         return () => {
@@ -42,13 +44,23 @@ export default function UploadDialog({sessionId, authorized, unauthorized, onClo
         }
     }
 
-    return <Dialog title={messages.uploadTitle} onClose={() => {
+    return <Dialog title={messages.uploadTitle} busy={pending} onClose={() => {
         if (!pending) onClose();
     }}>
         <p className="dialog-description">{messages.uploadDescription}</p>
         <form onSubmit={submit}>
-            <label className="field">{messages.chooseFile}<input type="file" required disabled={pending}
-                                                                 onChange={event => setFile(event.target.files?.[0] ?? null)}/></label>
+            <div className="field">
+                <label htmlFor={fileId}>{messages.chooseFile}</label>
+                <input ref={input} id={fileId} type="file" hidden required disabled={pending}
+                       onChange={event => setFile(event.target.files?.[0] ?? null)}/>
+                <div className="file-picker">
+                    <button type="button" className="button tonal" autoFocus disabled={pending}
+                            aria-describedby={nameId}
+                            onClick={() => input.current?.click()}>{messages.selectFile}</button>
+                    <span id={nameId} className="selected-file-name"
+                          aria-live="polite">{file?.name ?? messages.noFileSelected}</span>
+                </div>
+            </div>
             {pending && <p role="status">{messages.uploadingFile}</p>}
             {error && <p className="form-error" role="alert">{error}</p>}
             <div className="dialog-actions">

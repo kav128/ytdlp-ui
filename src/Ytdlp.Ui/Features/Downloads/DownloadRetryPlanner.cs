@@ -8,7 +8,7 @@ using Ytdlp.Ui.Infrastructure.Storage;
 
 namespace Ytdlp.Ui.Features.Downloads;
 
-public sealed record RetryPreparation(DownloadState State, string? Explanation = null);
+public sealed record RetryPreparation(DownloadState State, string? ContinuationReasonCode = null);
 
 public sealed class DownloadRetryPlanner(AppDbContext database, ArtifactIntegrity integrity, ILibraryStorage storage)
 {
@@ -36,7 +36,7 @@ public sealed class DownloadRetryPlanner(AppDbContext database, ArtifactIntegrit
                 {
                     if (!MediaPipeline.Matches(file, transfer)) throw new StorageConflictException();
 
-                    return new(resume, "The existing publication will be reconciled before any upload.");
+                    return new(resume, "publication_reconciliation");
                 }
             }
         }
@@ -46,7 +46,7 @@ public sealed class DownloadRetryPlanner(AppDbContext database, ArtifactIntegrit
         if (plan is null)
             return new(
                 DownloadState.Downloading,
-                resume == DownloadState.Downloading ? null : "The media plan is missing; downloading must be restored."
+                resume == DownloadState.Downloading ? null : "media_plan_missing"
             );
 
         var artifacts = await database.Artifacts.Where(item => item.DownloadId == record.Id
@@ -74,7 +74,7 @@ public sealed class DownloadRetryPlanner(AppDbContext database, ArtifactIntegrit
         return new(
             target,
             target != resume
-                ? "A required artifact is missing or has a different size/SHA-256; the earliest necessary stage will be restored."
+                ? "artifacts_unavailable"
                 : null
         );
     }

@@ -44,7 +44,7 @@ public class AppDbContextTests
     {
         await using var context = CreateContext();
         var migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.That(migrations, Has.Length.EqualTo(2));
+        Assert.That(migrations, Has.Length.EqualTo(3));
         Assert.That(migrations[0], Does.EndWith("_InitialPostgreSql"));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
         Assert.That(context.Database.HasPendingModelChanges(), Is.False);
@@ -177,6 +177,41 @@ public class AppDbContextTests
             )
         );
 
+        Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
+    }
+
+    [TestCase("The media plan is missing; downloading must be restored.", "media_plan_missing", true)]
+    [TestCase(
+        "A required artifact is missing or has a different size/SHA-256; the earliest necessary stage will be restored.",
+        "artifacts_unavailable",
+        true
+    )]
+    [TestCase("The existing publication will be reconciled before any upload.", "publication_reconciliation", true)]
+    [TestCase("The stage failed; its files were retained for a manual retry.", null, true)]
+    [TestCase("playlist_not_supported", null, true)]
+    [TestCase("ffmpeg stderr: unsupported packet at 00:01", null, false)]
+    public async Task ContinuationMigrationPreservesHistoryAndRealDiagnosticsWhileReplacingExactOwnedMessages(
+        string details,
+        string? reason,
+        bool cleared
+    )
+    {
+        await using var context = CreateContext();
+        var record = await AddDownloadAsync(context);
+        var attempt = await context.Attempts.SingleAsync();
+        var id = attempt.Id;
+        attempt.ErrorCode = "prepare_failed";
+        attempt.ErrorDetails = details;
+        await context.SaveChangesAsync();
+        await context.GetService<IMigrator>().MigrateAsync("20261103185351_MediaPlan");
+        context.ChangeTracker.Clear();
+        await context.InitializeAsync();
+        var restored = await context.Attempts.SingleAsync();
+        Assert.That(restored.Id, Is.EqualTo(id));
+        Assert.That(restored.DownloadId, Is.EqualTo(record.Id));
+        Assert.That(restored.ErrorCode, Is.EqualTo("prepare_failed"));
+        Assert.That(restored.ContinuationReasonCode, Is.EqualTo(reason));
+        Assert.That(restored.ErrorDetails, Is.EqualTo(cleared ? null : details));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
     }
 

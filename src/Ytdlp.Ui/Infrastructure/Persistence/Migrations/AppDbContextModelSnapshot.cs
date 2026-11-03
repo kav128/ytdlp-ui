@@ -99,6 +99,9 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("ContinuationReasonCode")
+                        .HasColumnType("text");
+
                     b.Property<Guid>("DownloadId")
                         .HasColumnType("uuid");
 

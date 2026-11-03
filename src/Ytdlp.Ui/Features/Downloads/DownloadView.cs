@@ -32,6 +32,7 @@ public sealed record DownloadAttemptView(
     DateTimeOffset? StartedAt,
     DateTimeOffset? FinishedAt,
     string? ErrorCode,
+    string? ContinuationReasonCode,
     DownloadStageView[] Stages
 );
 

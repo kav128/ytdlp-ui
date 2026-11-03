@@ -31,7 +31,9 @@ public sealed record MediaProbe(
     string? AudioCodec
 );
 
-public sealed class MediaProcessingException(string code, string? details = null) : Exception(details ?? code)
+public sealed class MediaProcessingException(string code, string? details = null, bool toolDiagnostic = false)
+    : Exception(details ?? code)
 {
     public string Code { get; } = code;
+    public string? DiagnosticDetails { get; } = toolDiagnostic ? details : null;
 }

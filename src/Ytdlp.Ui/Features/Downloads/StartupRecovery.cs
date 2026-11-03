@@ -36,7 +36,7 @@ public sealed class StartupRecovery(AppDbContext database, TimeProvider clock)
             attempt.Status = AttemptStatus.Failed;
             attempt.FinishedAt = clock.GetUtcNow();
             attempt.ErrorCode = "interrupted";
-            attempt.ErrorDetails = "Processing was interrupted; retry is required.";
+            attempt.ErrorDetails = null;
 
             var stage = await database.Stages.SingleOrDefaultAsync(
                             item => item.AttemptId == attempt.Id

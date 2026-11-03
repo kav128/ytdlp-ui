@@ -221,7 +221,7 @@ public sealed class DownloadCommands(
         var number = await NextAttemptNumberAsync(record.Id, cancellationToken);
         AddAttempt(record, number, reason, record.ResumeState!.Value, now);
         var newAttempt = database.Attempts.Local.Single(item => item.Id == record.CurrentAttemptId);
-        newAttempt.ErrorDetails = preparation.Explanation;
+        newAttempt.ContinuationReasonCode = preparation.ContinuationReasonCode;
 
         if (newPublication is null)
         {

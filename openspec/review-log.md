@@ -546,16 +546,19 @@ Root сообщил успешный reliability probe на overlay `953179624c5
 
 ### R11 — нестабильная синхронизация сценария смены cookie-сессии
 
-- **Severity:** P2; статус `fixed`.
--
+**Severity:** P2; статус `fixed`.
+
 **Доказательство:** после Reformat43 выполнены последовательные frontend build и `npm --prefix src/Ytdlp.Ui.Client test`. Build успешен, Vitest30/31. `App.test.tsx:129`, сценарий `ignores an old upload completion after another cookie session opens a new upload form`, падает на первом `getByLabelText(messages.chooseFile)`: кнопка Upload уже появилась, но dialog отсутствует, private list еще Loading. Тест открывает форму во время первоначальной смены sessionId/reset effect; его ожидание кнопки недостаточно подтверждает завершение перехода.
-- **Требуемое
-  поведение:** детерминированно дождаться подтвержденной сессии/согласованного UI перед открытием форм A и B, затем сохранить проверку, что поздний upload A не закрывает и не меняет форму B. Не устранять проверку, не использовать sleep. По этому падению не заявляется доказанный production defect.
-- **Ответ
-  разработчика:** ожидание initial Private video перед Upload A, после401 — отсутствия private data и header login, после focus B — вновь Private video перед Upload B. Все проверки позднего promise, сохранности dialog B и выбранного new.bin оставлены, sleeps отсутствуют. Изменен только App.test.tsx, production TS/dist не пересобирались.
-- **Решение
-  руководителя:** ограниченное test-only исправление согласовано при подтверждении intermediate render и сохранении всех stale-response assertions; production/dist остаются стабильными. Независимый backend gate разрешен, UI suite повторяется после Reformat исправленного теста.
--
+
+**Требуемое
+поведение:** детерминированно дождаться подтвержденной сессии/согласованного UI перед открытием форм A и B, затем сохранить проверку, что поздний upload A не закрывает и не меняет форму B. Не устранять проверку, не использовать sleep. По этому падению не заявляется доказанный production defect.
+
+**Ответ
+разработчика:** ожидание initial Private video перед Upload A, после401 — отсутствия private data и header login, после focus B — вновь Private video перед Upload B. Все проверки позднего promise, сохранности dialog B и выбранного new.bin оставлены, sleeps отсутствуют. Изменен только App.test.tsx, production TS/dist не пересобирались.
+
+**Решение
+руководителя:** ограниченное test-only исправление согласовано при подтверждении intermediate render и сохранении всех stale-response assertions; production/dist остаются стабильными. Независимый backend gate разрешен, UI suite повторяется после Reformat исправленного теста.
+
 **Проверка:** первый повтор устранил исходную гонку, но обнаружил неоднозначный новый login selector: две допустимые кнопки header/banner,30/31. Разработчик ограничил query header banner; root повторил Rider. Последующий независимый полный Vitest31/31 прошел, включая A→401→B и оба202/204 delete сценария. Backend/dist не менялись; пройденные проверки не повторялись без причины.
 
 ### Независимые финальные проверки
@@ -587,6 +590,80 @@ Root подтвердил настоящий Rider MCP Reformat43 изменен
 
 Независимая приемка этапа 6 завершена:232+155+61+31, build/publish/SHA/OpenSpec прошли; R11 закрыт после test-only исправления. Результаты переданы руководителю для заключительного Reformat документов и отдельного коммита. Полная визуальная приемка, отображение/локализация всей stage history и production runtime обеих архитектур остаются этапам 7–8; пользовательский Authentik в manual окружении не проверялся.
 
+## Этап 7. Полный интерфейс, история и локализация
+
+Статус: этап 6 принят и закоммичен как `6e3f74b`; независимая приемка UI этапа 7 завершена. R12 `fixed`, следующий идентификатор замечания — `R13`. Исполняемые проверки выполнены после STOP/Rider, browser proof руководителя и его ограничения записаны отдельно.
+
+### Критерии приемки
+
+- На одной странице сохраняются публичная библиотека и административный блок только после подтвержденного SSO. Локальной парольной формы, ручного выбора темы/языка и отдельной admin страницы нет. URL/file формы открываются по действиям, сохраняют валидацию и фактическое ожидание без двойной отправки.
+- Клиентские типы соответствуют текущему API attempts/stages. История показывает попытки с reason/status, точкой начала/продолжения, датами, ошибками и этапами с их статусами, временем, пригодным progress и reuse. Прежние успешные/неудачные попытки не заменяются текущей; retry/delete/cancel остаются различимыми, FailedState/ResumeState не теряются в представлении.
+- Открытая история привязана к download ID и обновляется подтвержденными данными poll, не остается snapshot прежнего этапа. При выходе/окончательном 401/смене cookie-сессии закрытые данные и окна очищаются; поздние history/download/action/upload ответы A не открывают окна и не меняют сессию B.
+- Каталог отражает подтвержденную worker публикацию до Completed, последующий own DELETE202 и фактическое исчезновение файла без ручной перезагрузки страницы.202 показывает принятое намерение, не успех удаления; файл остается до подтвержденного listing. Внешний 204 и upload201 сохраняют прежнюю семантику. Ошибка refresh не симулирует пустой каталог или подтвержденное удаление; устаревший ответ не заменяет более свежий.
+- Poll/refresh не создают перекрывающиеся неконтролируемые запросы, не вызывают бесконечное обновление каталога и прекращаются при unmount/скрытой вкладке согласно выбранному техническому режиму. Анонимные читатели не запрашивают jobs/history. Повторный focus/visibility и смена сессии не пропускают актуальный результат.
+- Карточка показывает title либо исходный URL, текущий этап/дату, локализованную ошибку и только серверные allowedActions. Cancel/Retry повторно проверяются сервером; CleaningUp/Failed или Queued ResumeCleaningUp не предлагают cancel. Потеря сессии,503 и конфликт команды не дают ложного успешного уведомления.
+- Процент отображается лишь для известного progress текущего этапа; null дает indeterminate без числа. Нет общего процента, выдуманного роста, ETA/скорости. Даты, числа и размеры форматируются выбранным EN/RU, unknown enum/code получает локализованный fallback.
+- Все пользовательские заголовки, статусы этапов/попыток, причины retry/reuse, ошибки/валидация и уведомления находятся в EN/RU ресурсах с английским fallback. Собственные английские объяснения приложения не выдаются за переведенные reasons; оригинальная внешняя диагностика допустима только в явных подробностях и безопасно отображается как текст.
+- Клавиатура/доступные имена, dialog focus/Escape/return focus, touch actions и indeterminate progress остаются пригодными. На телефоне длинные URL/названия/история не скрывают действия и не ломают страницу; на десктопе действия справа внизу, cancel красный в обеих системных темах. Пользовательский ввод не вставляется как HTML.
+- Целевые UI tests воспроизводят live history, библиотеку при worker publication/delete, реальные stale session/response порядки и честный progress; сборка/publish сохраняют актуальные assets. Root отдельно выполняет визуальную приемку настоящего изолированного backend на desktop/mobile, EN/RU и light/dark; симуляция DOM не выдается за эту проверку. Delivery/CI и ARM64 остаются этапу 8.
+
+### Проверки и замечания
+
+Прочитаны основные web-interface/lifecycle требования и auth/file-upload delta, текущие API DTO, HistoryDialog, DownloadCard, useDownloads, Dialog и локализация. На исходном срезе UI Attempt содержал только четыре поля и history хранил snapshot; обогащение типов/истории и refresh согласованы как объем этапа 7, а не дефект уже принятого этапа 6. На шаге раннего чтения findings не было; R12 затем зарегистрирован по настоящему browser QA и исправлен.
+
+Для локализации retry reason сначала рассматривался существующий Attempt.ErrorCode вместо собственных английских Explanation. Руководитель уточнил, что причина fallback должна сохраниться и после реальной ошибки этой же retry-попытки; один перезаписываемый ErrorCode этого не обеспечивает. Разрешена независимая запись в stage history либо простой nullable ContinuationReasonCode в attempt с миграцией/additive DTO, если готовой независимой записи нет. Причина отображается как информация, фактический failure отдельно как ошибка; обе истории сохраняются. Приемка включает backend/API и EN/RU regressions, сохранение причины после успешного FinishAttempt и последующего failure; весь backend без необходимости повторно не запускается.
+
+### Отдельная проверка руководителя: upgrade и browser QA
+
+Root сообщил успешный настоящий upgrade 6→7, первоначально на overlay `305f3418…`, затем после R12 на final overlay `7e3b802d0c163629f4b3b4a9c434d4c8a29ad3c9a07ea24bbfa9b1c597f973f9`. Оба обновления сохранили прежнюю cookie, job IDs/states и IDs attempts/stages; nullable migration применена. Rich history для valid.mkv показывает три попытки, включая Deleted и следующий Completed.
+
+На настоящем backend выполнены EN desktop и RU mobile 390×844. В мобильной dark теме открытая история обновилась Queued→Completed с четырьмя этапами, каталог 8→9 изменился без Refresh. Ошибка карточки и красная cancel confirmation доступны, измеренные width/scrollWidth равны 335. В EN desktop/light styles проверены create, настоящий metadata 404 и delete/cancel confirmations; финальные destructive кнопки в этой визуальной проверке не нажимались. RU mobile/light styles подтвердили chooser и 0-byte upload до catalog10. Ранее настоящий 51 B upload завершился публичным browser download с совпадающим SHA-256; анонимный экран не показывает Downloads. Ревьюер независимо просмотрел скриншоты mobile history, desktop cancel confirmation и обе версии upload control.
+
+Ограничение QA-среды: IAB фактически сообщает prefersDark=true даже при color-scheme:light родительской рамки. Native dark проверен; базовые light стили проверены через ignored QA proxy, отключающий только dark media block. Production CSS не менялся; настоящий native light preference не проверен. Filechooser setFiles занял 553/193 секунды, включая вызов с 10s timeout; это ограничение инструмента, не product defect. Root подтвердил очистку четырех своих контейнеров, двух volumes, сети/proxy/testcookie configuration и synthetic download, закрыл browser tab и сбросил viewport.
+
+Скриншоты находятся в `artifacts/screenshots/stage7-public-final-en-dark.jpg`, `stage7-upload-fixed-ru-light-mobile.jpg`, `stage7-mobile-history-ru-dark.jpg`, `stage7-cancel-ru-dark-mobile.jpg`, `stage7-confirm-en-light-desktop.jpg`. Проверен изолированный тестовый overlay с подготовленным TicketStore, не реальный пользовательский Authentik и не конечный production runtime этапа 8.
+
+### R12 — английский native file chooser в русской форме
+
+**Severity:** P2; статус `fixed`.
+
+**Доказательство:** root открыл русскую форму upload в настоящем browser QA, выбранное имя видно, но native `input type=file` в UploadDialog рисует английскую UA-кнопку Choose File. Ревьюер независимо просмотрел `artifacts/screenshots/stage7-upload-ru-dark.jpg` и подтвердил сочетание русского интерфейса и английской кнопки. Это относится к пользовательским строкам EN/RU; работа выбора и отправки сама по себе не объявляется сломанной.
+
+**Требуемое
+поведение:** локализованные кнопка выбора/empty state и видимое выбранное имя, сохраненные keyboard/label, pending/double-submit/session guards и отсутствие ограничений типа/размера. OS picker вне страницы не требуется переводить средствами приложения.
+
+**Ответ
+разработчика:** принято; ограниченный patch UploadDialog/CSS/ENRU с regression, скрытый native input и отдельным локализованным control. Host dist до нового STOP/Rider не пересобирается.
+
+**Решение
+руководителя:** локализованный control согласован; сначала fix/Rider, затем единый UI build → Release → targeted backend → publish gate с одним актуальным dist.
+
+**Проверка:** после повторного Rider независимый полный UI run 48/48 прошел, включая chooser/filename/pending/0-byte regression. Root перепроверил final overlay `7e3b802d0c163629f4b3b4a9c434d4c8a29ad3c9a07ea24bbfa9b1c597f973f9`: RU mobile 390×844 показывает «Выбрать файл»/«Файл не выбран», выбор single-file и 0-byte qa-zero-stage7.txt успешен, имя показано, подтвержденный каталог обновился до 10 файлов/0 Б без ручного refresh. Ревьюер просмотрел `artifacts/screenshots/stage7-upload-fixed-ru-light-mobile.jpg`: локализованная кнопка и имя видны, действия помещаются. Это light CSS через описанный QA proxy; native light preference не заявляется.
+
+### Независимые финальные проверки
+
+После STOP и повторного подтвержденного Rider MCP Reformat 42 выполнен согласованный gate последовательно, с единым новым dist. Разработчик и root не меняли host source/assets во время проверок.
+
+| Проверка                                             | Фактический результат                                                                                                                          |
+|------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| React production build и Vitest                      | PASS,48/48, пропусков 0;8 test files                                                                                                           |
+| `dotnet build Ytdlp.Ui.slnx -c Release --no-restore` | PASS, четыре проекта,0 warnings/errors                                                                                                         |
+| Целевые HTTP/PostgreSQL/MinIO                        | 19/19, пропусков 0; `.tools/reviewer-results/stage7-targeted-review.trx`                                                                       |
+| Обычный publish и publish `--no-build`               | Оба PASS; `.tools/reviewer-stage7-publish` и `.tools/reviewer-stage7-publish-no-build`; все 3 текущих dist assets совпали с wwwroot по SHA-256 |
+| Production deps                                      | Npgsql присутствует, тестовые/SQLite/ProcessFixture зависимости отсутствуют в обоих outputs                                                    |
+| `openspec validate --all --strict --no-interactive`  | 10/10 PASS                                                                                                                                     |
+| `git diff --check`, освобождение Testcontainers      | PASS; контейнеров с label org.testcontainers=true после целевого прогона нет                                                                   |
+
+В 19/19 входят 6 migration cases (три прежних retry explanations, generic own message, legacy literal code, сохраненный настоящий stderr), соответствие текущей модели и повторная инициализация, upgrade предыдущей схемы с историей/tickets, три API create/retry состояния, настоящий retry→следующая failure→новый success с независимым ContinuationReasonCode и сохранением обеих ошибок, два lost transition после S3/cleanup, три unsupported source без собственных English details, два final artifact до отказа ready-save. Новый nullable столбец и additive DTO не меняют FSM/публикационный протокол; непричастные полные backend suites этапа 6 повторно не запускались.
+
+В 48/48 проверены live history от текущего poll вместо snapshot, обновление каталога по подтвержденной публикации, queued202 против подтвержденного 204, stale session/download/action/upload/create ответы, актуализация cancel confirmation по allowedActions, single submit и busy dialog, публичный poll без private requests, отсутствие перекрытия/скрытая вкладка/отказ и восстановление, сохранность последнего listing, неизвестный процент без числа, HTML-подобная диагностика как React text, nested EN/RU resources и fallback. Регрессия R12 проверяет localized chooser, видимое имя, доступное описание, pending guard и допустимость 0-byte файла; ее browser подтверждение сохраняется отдельно.
+
+Ранний вопрос о fallback reason после новой ошибки решен отдельным полем, вместо потери причины при ErrorCode override. Уточнения lifetime/owner, busy forms, live cancel confirmation и legacy literal diagnostics вошли до финального gate; выдуманный R12 для исходной mobile layout доработки не регистрировался. R12 относится только к фактически показанной английской chooser-кнопке.
+
+### Итог этапа
+
+Независимая приемка этапа 7 завершена:48 UI и 19 целевых PG/MinIO проверок, Release, оба publish/SHA/deps и OpenSpec10/10 прошли. R12 исправлен с component и настоящим browser proof; открытых code findings нет. EN/RU desktop/mobile, live history/catalog и dark/base light стили проверены с явно указанным ограничением native light preference. Лог передан руководителю для финального Reformat и коммита; production runtime обеих архитектур и CI остаются этапу 8.
+
 ## Исходные вопросы для последующих этапов
 
 - Исторический вопрос этапов4–5 о первичном own DELETE решен в этапе6: queued202 с pending StartedAt=null, общий worker и минимальный честный UI; внешний файл без job остается HTTP. Сеть не помещается в длинную транзакцию БД; проверки очереди, intent-before-I/O и согласования успеха пройдены.
@@ -594,6 +671,6 @@ Root подтвердил настоящий Rider MCP Reformat43 изменен
 - Календарный Docker-тег: в исходной `.github/workflows/ci.yml` используется `--date=format`, поэтому `TZ=Europe/Moscow`
   не обеспечивает преобразование даты коммита. Указание уже есть в `REVIEW-FOLLOWUPS.md`; проверить исправление на этапе
   CI/поставки с коммитом около московской границы дня. Это не блокер этапа 1 при отсутствии изменения логики тегов.
-- После этапа 6 еще остаются production runtime yt-dlp/FFmpeg обеих архитектур и полная UI/визуальная приемка.
+- После этапа 7 еще остаются production runtime yt-dlp/FFmpeg обеих архитектур, CI и финальная синхронизация спецификаций.
   Это запланированная работа следующих этапов; прежняя приемка адаптации тестовой структуры не означала готовности этих
-  возможностей. OIDC/cookie приняты в этапе 2, S3/ручные файлы — в этапе 3, PostgreSQL и сохраняемые API/очередь — в этапе 4, worker/media pipeline — в этапе 5, полная reliability матрица — в этапе6 с указанными ограничениями окружения.
+  возможностей. OIDC/cookie приняты в этапе 2, S3/ручные файлы — в этапе 3, PostgreSQL и сохраняемые API/очередь — в этапе 4, worker/media pipeline — в этапе 5, reliability матрица — в этапе6, полный UI — в этапе7 с указанными ограничениями окружения.
