@@ -1,3 +1,4 @@
+using Ytdlp.Ui.IntegrationTests.Tools;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -6,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Ytdlp.Ui.Infrastructure.Persistence;
 using Ytdlp.Ui.Features.Auth;
 
-namespace Ytdlp.Ui.Tests.Persistence;
+namespace Ytdlp.Ui.IntegrationTests.Persistence;
 
 [TestFixture]
 [Category("SQLite")]
@@ -18,16 +19,18 @@ public class AppDatabaseStartupTests
     [SetUp]
     public void SetUp()
     {
-        _directory = Path.Combine(Path.GetTempPath(), "ytdlp-ui-tests", Guid.NewGuid().ToString("N"));
+        _directory = Path.Combine(SetupGlobal.DirectoryPath, Guid.NewGuid().ToString("N"));
         _databasePath = Path.Combine(_directory, "db", "app.db");
     }
 
     [TearDown]
     public void TearDown()
     {
-        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "ytdlp-ui-tests")) + Path.DirectorySeparatorChar;
+        var root = Path.GetFullPath(SetupGlobal.DirectoryPath) + Path.DirectorySeparatorChar;
+
         if (!Path.GetFullPath(_directory).StartsWith(root, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Test cleanup path is outside the temporary test root.");
+
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
     }
 
@@ -35,7 +38,7 @@ public class AppDatabaseStartupTests
     public async Task StartupCreatesMigratedDatabaseInWalModeBeforeRequests()
     {
         Assert.That(Directory.Exists(_directory), Is.False);
-        using var factory = new TestApplicationFactory(_databasePath);
+        using var factory = new CustomWebApplicationFactory(_databasePath);
         await using var scope = factory.Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
@@ -55,10 +58,20 @@ public class AppDatabaseStartupTests
         string refreshToken;
         string sessionId;
         string[] migrations;
-        using (var first = new TestApplicationFactory(_databasePath))
+
+        using (var first = new CustomWebApplicationFactory(_databasePath))
         {
             using var client = first.CreateClient();
-            using var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "demo-password" });
+
+            using var login = await client.PostAsJsonAsync(
+                                  "/api/auth/login",
+                                  new
+                                  {
+                                      username = "admin",
+                                      password = "demo-password"
+                                  }
+                              );
+
             Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             var tokens = (await login.Content.ReadFromJsonAsync<AuthTokens>())!;
             token = tokens.AccessToken;
@@ -69,7 +82,7 @@ public class AppDatabaseStartupTests
             migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
         }
 
-        using var restarted = new TestApplicationFactory(_databasePath);
+        using var restarted = new CustomWebApplicationFactory(_databasePath);
         await using var restartedScope = restarted.Services.CreateAsyncScope();
         var restored = restartedScope.ServiceProvider.GetRequiredService<AppDbContext>();
         Assert.That((await restored.AdminSessions.SingleAsync()).Id, Is.EqualTo(sessionId));
@@ -92,22 +105,41 @@ public class AppDatabaseStartupTests
     public async Task LogoutRevocationSurvivesRestart()
     {
         AuthTokens tokens;
-        using (var first = new TestApplicationFactory(_databasePath))
+
+        using (var first = new CustomWebApplicationFactory(_databasePath))
         {
             using var client = first.CreateClient();
-            using var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "demo-password" });
+
+            using var login = await client.PostAsJsonAsync(
+                                  "/api/auth/login",
+                                  new
+                                  {
+                                      username = "admin",
+                                      password = "demo-password"
+                                  }
+                              );
+
             tokens = (await login.Content.ReadFromJsonAsync<AuthTokens>())!;
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
             using var logout = await client.PostAsync("/api/auth/logout", null);
             Assert.That(logout.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
         }
-        using var restarted = new TestApplicationFactory(_databasePath);
+
+        using var restarted = new CustomWebApplicationFactory(_databasePath);
         using var restartedClient = restarted.CreateClient();
-        restartedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+        restartedClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
         using var access = await restartedClient.GetAsync("/api/downloads");
         Assert.That(access.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
         restartedClient.DefaultRequestHeaders.Authorization = null;
-        using var refresh = await restartedClient.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = tokens.RefreshToken });
+
+        using var refresh = await restartedClient.PostAsJsonAsync(
+                                "/api/auth/refresh",
+                                new { refreshToken = tokens.RefreshToken }
+                            );
+
         Assert.That(refresh.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
@@ -116,7 +148,7 @@ public class AppDatabaseStartupTests
     {
         Directory.CreateDirectory(_directory);
         File.WriteAllText(Path.Combine(_directory, "db"), "This is a file, not a database directory.");
-        using var factory = new TestApplicationFactory(_databasePath);
+        using var factory = new CustomWebApplicationFactory(_databasePath);
         Assert.Throws<IOException>(() => factory.CreateClient());
         Assert.That(File.Exists(_databasePath), Is.False);
     }

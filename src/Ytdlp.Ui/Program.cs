@@ -8,7 +8,7 @@ using Ytdlp.Ui.Infrastructure.Authentication;
 
 var builder = WebApplication.CreateBuilder(args);
 
-
+builder.Services.AddProblemDetails();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddAppDatabase(builder.Configuration);
 builder.Services.AddAdminAuthentication(builder.Configuration);
@@ -16,6 +16,7 @@ builder.Services.AddSingleton<DemoStore>();
 
 var app = builder.Build();
 
+app.UseExceptionHandler();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseDefaultFiles();

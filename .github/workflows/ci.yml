@@ -39,8 +39,11 @@ jobs:
       - name: Build
         run: dotnet build Ytdlp.Ui.slnx -c Release --no-restore
 
-      - name: Test
+      - name: Unit tests
         run: dotnet test tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj -c Release --no-build --verbosity normal
+
+      - name: Integration tests
+        run: dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build --verbosity normal
 
       - name: Test React
         run: npm test

@@ -1,3 +1,4 @@
+using Ytdlp.Ui.IntegrationTests.Tools;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -6,7 +7,7 @@ using Microsoft.Extensions.Time.Testing;
 using Ytdlp.Ui.Infrastructure.Authentication;
 using Ytdlp.Ui.Infrastructure.Persistence;
 
-namespace Ytdlp.Ui.Tests.Persistence;
+namespace Ytdlp.Ui.IntegrationTests.Persistence;
 
 [TestFixture]
 [Category("SQLite")]
@@ -18,9 +19,16 @@ public class AuthenticationServiceTimeTests
         var now = new DateTimeOffset(2026, 10, 12, 10, 0, 0, 123, TimeSpan.Zero);
         var clock = new FakeTimeProvider(now);
 
-        using var factory = new TestApplicationFactory();
+        using var factory = new CustomWebApplicationFactory();
+
         using var application = factory.WithWebHostBuilder(builder =>
-            builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(clock)));
+                                                               builder.ConfigureServices(services => services
+                                                                                            .AddSingleton<TimeProvider>(
+                                                                                                 clock
+                                                                                             )
+                                                               )
+        );
+
         await using var scope = application.Services.CreateAsyncScope();
         var authentication = scope.ServiceProvider.GetRequiredService<AuthenticationService>();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -29,23 +37,33 @@ public class AuthenticationServiceTimeTests
         var issuedAt = DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds());
 
         Assert.Multiple(() =>
-        {
-            Assert.That(session.IssuedAt, Is.EqualTo(issuedAt));
-            Assert.That(session.ExpiresAt, Is.EqualTo(issuedAt.AddHours(12)));
-            Assert.That(login.ExpiresAt, Is.EqualTo(issuedAt.AddMinutes(5)));
-            Assert.That(new JwtSecurityTokenHandler().ReadJwtToken(login.AccessToken).ValidTo,
-                Is.EqualTo(login.ExpiresAt.UtcDateTime));
-        });
+            {
+                Assert.That(session.IssuedAt, Is.EqualTo(issuedAt));
+                Assert.That(session.ExpiresAt, Is.EqualTo(issuedAt.AddHours(12)));
+                Assert.That(login.ExpiresAt, Is.EqualTo(issuedAt.AddMinutes(5)));
+
+                Assert.That(
+                    new JwtSecurityTokenHandler().ReadJwtToken(login.AccessToken).ValidTo,
+                    Is.EqualTo(login.ExpiresAt.UtcDateTime)
+                );
+            }
+        );
 
         clock.SetUtcNow(session.ExpiresAt.AddMinutes(-1).AddMilliseconds(123));
         Assert.That(await authentication.IsSessionActiveAsync(session.Id, CancellationToken.None), Is.True);
         var refreshed = await authentication.RefreshAsync(login.RefreshToken, CancellationToken.None);
         Assert.That(refreshed, Is.Not.Null);
         Assert.That(refreshed!.ExpiresAt, Is.EqualTo(session.ExpiresAt));
-        Assert.That(new JwtSecurityTokenHandler().ReadJwtToken(refreshed.AccessToken).ValidTo,
-            Is.EqualTo(session.ExpiresAt.UtcDateTime));
-        Assert.That((await database.AdminSessions.AsNoTracking().SingleAsync()).ExpiresAt,
-            Is.EqualTo(session.ExpiresAt));
+
+        Assert.That(
+            new JwtSecurityTokenHandler().ReadJwtToken(refreshed.AccessToken).ValidTo,
+            Is.EqualTo(session.ExpiresAt.UtcDateTime)
+        );
+
+        Assert.That(
+            (await database.AdminSessions.AsNoTracking().SingleAsync()).ExpiresAt,
+            Is.EqualTo(session.ExpiresAt)
+        );
 
         clock.SetUtcNow(session.ExpiresAt);
         Assert.That(await authentication.IsSessionActiveAsync(session.Id, CancellationToken.None), Is.False);
@@ -58,9 +76,16 @@ public class AuthenticationServiceTimeTests
         var now = new DateTimeOffset(2026, 10, 12, 10, 0, 0, TimeSpan.Zero);
         var clock = new FakeTimeProvider(now);
 
-        using var factory = new TestApplicationFactory();
+        using var factory = new CustomWebApplicationFactory();
+
         using var application = factory.WithWebHostBuilder(builder =>
-            builder.ConfigureServices(services => services.AddSingleton<TimeProvider>(clock)));
+                                                               builder.ConfigureServices(services => services
+                                                                                            .AddSingleton<TimeProvider>(
+                                                                                                 clock
+                                                                                             )
+                                                               )
+        );
+
         await using var scope = application.Services.CreateAsyncScope();
         var authentication = scope.ServiceProvider.GetRequiredService<AuthenticationService>();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -70,7 +95,11 @@ public class AuthenticationServiceTimeTests
         clock.Advance(TimeSpan.FromMinutes(3).Add(TimeSpan.FromMilliseconds(456)));
         await authentication.RevokeAsync(session.Id, CancellationToken.None);
 
-        Assert.That((await database.AdminSessions.AsNoTracking().SingleAsync()).RevokedAt, Is.EqualTo(now.AddMinutes(3).AddMilliseconds(456)));
+        Assert.That(
+            (await database.AdminSessions.AsNoTracking().SingleAsync()).RevokedAt,
+            Is.EqualTo(now.AddMinutes(3).AddMilliseconds(456))
+        );
+
         Assert.That(await authentication.IsSessionActiveAsync(session.Id, CancellationToken.None), Is.False);
         Assert.That(await authentication.RefreshAsync(login.RefreshToken, CancellationToken.None), Is.Null);
     }

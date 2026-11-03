@@ -1,39 +1,23 @@
 using System.Net;
 using System.Text.RegularExpressions;
-using Microsoft.AspNetCore.Mvc.Testing;
 
-namespace Ytdlp.Ui.Tests;
+namespace Ytdlp.Ui.IntegrationTests;
 
 [TestFixture]
-public class HelloApplicationTests
+public class HelloApplicationTests : SetupBase
 {
-    private WebApplicationFactory<Program> factory = null!;
-    private HttpClient client = null!;
-
-    [OneTimeSetUp]
-    public void SetUp()
-    {
-        factory = new TestApplicationFactory();
-        client = factory.CreateClient();
-    }
-
-    [OneTimeTearDown]
-    public void TearDown()
-    {
-        client.Dispose();
-        factory.Dispose();
-    }
-
     [Test]
     public async Task HelloEndpointReturnsPlainTextWithoutAuthentication()
     {
-        using var response = await client.GetAsync("/api/hello");
+        using var response = await Client.GetAsync("/api/hello");
 
         Assert.Multiple(() =>
-        {
-            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-            Assert.That(response.Content.Headers.ContentType?.MediaType, Is.EqualTo("text/plain"));
-        });
+            {
+                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(response.Content.Headers.ContentType?.MediaType, Is.EqualTo("text/plain"));
+            }
+        );
+
         Assert.That(await response.Content.ReadAsStringAsync(), Is.EqualTo("Hello World"));
     }
 
@@ -42,7 +26,7 @@ public class HelloApplicationTests
     [TestCase("/assets/missing.js")]
     public async Task MissingApiOrAssetReturnsNotFound(string path)
     {
-        using var response = await client.GetAsync(path);
+        using var response = await Client.GetAsync(path);
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
         Assert.That(response.Content.Headers.ContentType?.MediaType, Is.Not.EqualTo("text/html"));
@@ -52,7 +36,7 @@ public class HelloApplicationTests
     [TestCase("/client-route")]
     public async Task FrontendAndItsCompiledAssetsAreServedByApplication(string path)
     {
-        using var response = await client.GetAsync(path);
+        using var response = await Client.GetAsync(path);
         var html = await response.Content.ReadAsStringAsync();
 
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
@@ -61,7 +45,7 @@ public class HelloApplicationTests
 
         var scriptPath = Regex.Match(html, "src=\"(?<path>/assets/[^\"]+\\.js)\"").Groups["path"].Value;
         Assert.That(scriptPath, Is.Not.Empty);
-        using var scriptResponse = await client.GetAsync(scriptPath);
+        using var scriptResponse = await Client.GetAsync(scriptPath);
         Assert.That(scriptResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(await scriptResponse.Content.ReadAsStringAsync(), Does.Contain("Demo workspace"));
     }

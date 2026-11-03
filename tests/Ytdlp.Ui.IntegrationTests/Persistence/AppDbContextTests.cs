@@ -8,7 +8,7 @@ using Ytdlp.Ui.Domain.Primitives;
 using Ytdlp.Ui.Infrastructure.Persistence;
 using Ytdlp.Ui.Infrastructure.Persistence.Entities;
 
-namespace Ytdlp.Ui.Tests.Persistence;
+namespace Ytdlp.Ui.IntegrationTests.Persistence;
 
 [TestFixture]
 [Category("SQLite")]
@@ -22,7 +22,7 @@ public class AppDbContextTests
     [SetUp]
     public async Task SetUp()
     {
-        _directory = Path.Combine(Path.GetTempPath(), "ytdlp-ui-tests", Guid.NewGuid().ToString("N"));
+        _directory = Path.Combine(SetupGlobal.DirectoryPath, Guid.NewGuid().ToString("N"));
         _databasePath = Path.Combine(_directory, "db", "app.db");
         var services = new ServiceCollection();
         services.AddAppDatabase(CreateConfiguration(Path.GetRelativePath(Environment.CurrentDirectory, _databasePath)));
@@ -35,9 +35,11 @@ public class AppDbContextTests
     public void TearDown()
     {
         _provider?.Dispose();
-        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "ytdlp-ui-tests")) + Path.DirectorySeparatorChar;
+        var root = Path.GetFullPath(SetupGlobal.DirectoryPath) + Path.DirectorySeparatorChar;
+
         if (!Path.GetFullPath(_directory).StartsWith(root, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Test cleanup path is outside the temporary test root.");
+
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
     }
 
@@ -71,30 +73,57 @@ public class AppDbContextTests
     public async Task RefreshHashEqualityAndUniqueIndexCompareByteContentAndAllowNulls()
     {
         var hash = System.Security.Cryptography.SHA256.HashData("refresh"u8);
+
         await using (var context = CreateContext())
         {
             context.AdminSessions.AddRange(
                 new AdminSessionRecord
                 {
-                    Id = "first", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12), RefreshTokenHash = hash
+                    Id = "first",
+                    IssuedAt = _createdAt,
+                    ExpiresAt = _createdAt.AddHours(12),
+                    RefreshTokenHash = hash
                 },
-                new AdminSessionRecord { Id = "null-first", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12) },
-                new AdminSessionRecord { Id = "null-second", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12) });
+                new AdminSessionRecord
+                {
+                    Id = "null-first",
+                    IssuedAt = _createdAt,
+                    ExpiresAt = _createdAt.AddHours(12)
+                },
+                new AdminSessionRecord
+                {
+                    Id = "null-second",
+                    IssuedAt = _createdAt,
+                    ExpiresAt = _createdAt.AddHours(12)
+                }
+            );
+
             await context.SaveChangesAsync();
         }
 
         var equalHash = hash.ToArray();
+
         await using (var reopened = CreateContext())
         {
             var stored = await reopened.AdminSessions.SingleAsync(session => session.RefreshTokenHash == equalHash);
             Assert.That(stored.Id, Is.EqualTo("first"));
             Assert.That(stored.RefreshTokenHash, Is.EqualTo(equalHash));
-            Assert.That(await reopened.AdminSessions.CountAsync(session => session.RefreshTokenHash == null), Is.EqualTo(2));
 
-            reopened.AdminSessions.Add(new AdminSessionRecord
-            {
-                Id = "duplicate", IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12), RefreshTokenHash = equalHash
-            });
+            Assert.That(
+                await reopened.AdminSessions.CountAsync(session => session.RefreshTokenHash == null),
+                Is.EqualTo(2)
+            );
+
+            reopened.AdminSessions.Add(
+                new AdminSessionRecord
+                {
+                    Id = "duplicate",
+                    IssuedAt = _createdAt,
+                    ExpiresAt = _createdAt.AddHours(12),
+                    RefreshTokenHash = equalHash
+                }
+            );
+
             var exception = await Assert.ThrowsAsync<DbUpdateException>(() => reopened.SaveChangesAsync());
             Assert.That(exception!.InnerException, Is.TypeOf<SqliteException>());
             Assert.That(((SqliteException)exception.InnerException!).SqliteErrorCode, Is.EqualTo(19));
@@ -113,15 +142,36 @@ public class AppDbContextTests
         Guid secondAttemptId;
         string sessionId;
         Download aggregate;
+
         await using (var context = CreateContext())
         {
             var record = NewDownload();
             aggregate = record.RestoreAggregate();
             Assert.That(aggregate.Apply(new StartAttempt(aggregate.AttemptId)).IsAccepted, Is.True);
-            Assert.That(aggregate.Apply(new StageSucceeded(aggregate.AttemptId, DownloadState.Downloading)).IsAccepted, Is.True);
-            Assert.That(aggregate.Apply(new StageSucceeded(aggregate.AttemptId, DownloadState.Preparing)).IsAccepted, Is.True);
-            Assert.That(aggregate.Apply(new StageFailed(aggregate.AttemptId, DownloadState.Uploading,
-                new("upload_failed", "diagnostic"), PublicationUncertain: true)).IsAccepted, Is.True);
+
+            Assert.That(
+                aggregate.Apply(new StageSucceeded(aggregate.AttemptId, DownloadState.Downloading)).IsAccepted,
+                Is.True
+            );
+
+            Assert.That(
+                aggregate.Apply(new StageSucceeded(aggregate.AttemptId, DownloadState.Preparing)).IsAccepted,
+                Is.True
+            );
+
+            Assert.That(
+                aggregate.Apply(
+                              new StageFailed(
+                                  aggregate.AttemptId,
+                                  DownloadState.Uploading,
+                                  new("upload_failed", "diagnostic"),
+                                  PublicationUncertain: true
+                              )
+                          )
+                         .IsAccepted,
+                Is.True
+            );
+
             record.Capture(aggregate, DownloadIntent.None, _createdAt.AddMinutes(1));
             record.Title = "Example";
             context.Downloads.Add(record);
@@ -133,26 +183,54 @@ public class AppDbContextTests
             context.Attempts.Add(firstAttempt);
             downloadId = record.Id;
             artifactId = Guid.NewGuid();
-            context.Artifacts.Add(new DownloadArtifactRecord
-            {
-                Id = artifactId, DownloadId = downloadId, WorkspaceGeneration = record.WorkspaceGeneration,
-                Kind = ArtifactKind.Prepared, RelativePath = "result.mp4", Size = 12345, IsReady = true,
-                Sha256 = new string('a', 64)
-            });
+
+            context.Artifacts.Add(
+                new DownloadArtifactRecord
+                {
+                    Id = artifactId,
+                    DownloadId = downloadId,
+                    WorkspaceGeneration = record.WorkspaceGeneration,
+                    Kind = ArtifactKind.Prepared,
+                    RelativePath = "result.mp4",
+                    Size = 12345,
+                    IsReady = true,
+                    Sha256 = new string('a', 64)
+                }
+            );
+
             firstStageId = Guid.NewGuid();
-            context.Stages.Add(new StageExecutionRecord
-            {
-                Id = firstStageId, DownloadId = downloadId, AttemptId = firstAttempt.Id,
-                Stage = ProcessingStage.Prepare, Status = StageStatus.Succeeded, ArtifactId = artifactId,
-                StartedAt = _createdAt, FinishedAt = _createdAt.AddSeconds(30)
-            });
-            context.Transfers.Add(new StorageTransferRecord
-            {
-                Id = Guid.NewGuid(), DownloadId = downloadId, ArtifactId = artifactId, PublicationId = record.PublicationId,
-                ObjectKey = $"downloads/{downloadId}/{record.PublicationId}/result.mp4", ExpectedSize = 12345,
-                Sha256 = new string('a', 64), MultipartUploadId = "upload-id", Status = TransferStatus.Failed,
-                CreatedAt = _createdAt, UpdatedAt = _createdAt.AddMinutes(1)
-            });
+
+            context.Stages.Add(
+                new StageExecutionRecord
+                {
+                    Id = firstStageId,
+                    DownloadId = downloadId,
+                    AttemptId = firstAttempt.Id,
+                    Stage = ProcessingStage.Prepare,
+                    Status = StageStatus.Succeeded,
+                    ArtifactId = artifactId,
+                    StartedAt = _createdAt,
+                    FinishedAt = _createdAt.AddSeconds(30)
+                }
+            );
+
+            context.Transfers.Add(
+                new StorageTransferRecord
+                {
+                    Id = Guid.NewGuid(),
+                    DownloadId = downloadId,
+                    ArtifactId = artifactId,
+                    PublicationId = record.PublicationId,
+                    ObjectKey = $"downloads/{downloadId}/{record.PublicationId}/result.mp4",
+                    ExpectedSize = 12345,
+                    Sha256 = new string('a', 64),
+                    MultipartUploadId = "upload-id",
+                    Status = TransferStatus.Failed,
+                    CreatedAt = _createdAt,
+                    UpdatedAt = _createdAt.AddMinutes(1)
+                }
+            );
+
             await context.SaveChangesAsync();
 
             secondAttemptId = Guid.NewGuid();
@@ -160,46 +238,88 @@ public class AppDbContextTests
             Assert.That(retry.IsAccepted, Is.True);
             record.Capture(aggregate, retry.Intent, _createdAt.AddMinutes(2));
             context.Attempts.Add(NewAttempt(record, number: 2));
-            context.Stages.Add(new StageExecutionRecord
-            {
-                Id = Guid.NewGuid(), DownloadId = downloadId, AttemptId = secondAttemptId,
-                Stage = ProcessingStage.Upload, Status = StageStatus.Pending,
-                ReusedFromStageId = firstStageId, ArtifactId = artifactId
-            });
+
+            context.Stages.Add(
+                new StageExecutionRecord
+                {
+                    Id = Guid.NewGuid(),
+                    DownloadId = downloadId,
+                    AttemptId = secondAttemptId,
+                    Stage = ProcessingStage.Upload,
+                    Status = StageStatus.Pending,
+                    ReusedFromStageId = firstStageId,
+                    ArtifactId = artifactId
+                }
+            );
+
             sessionId = Guid.NewGuid().ToString();
-            context.AdminSessions.Add(new AdminSessionRecord
-            {
-                Id = sessionId, IssuedAt = _createdAt, ExpiresAt = _createdAt.AddHours(12), RevokedAt = _createdAt.AddHours(1)
-            });
+
+            context.AdminSessions.Add(
+                new AdminSessionRecord
+                {
+                    Id = sessionId,
+                    IssuedAt = _createdAt,
+                    ExpiresAt = _createdAt.AddHours(12),
+                    RevokedAt = _createdAt.AddHours(1)
+                }
+            );
+
             await context.SaveChangesAsync();
         }
 
         await using var reopened = CreateContext();
         var saved = await reopened.Downloads.SingleAsync(record => record.Id == downloadId);
+
         Assert.Multiple(() =>
-        {
-            Assert.That(saved.RestoreAggregate().Snapshot, Is.EqualTo(aggregate.Snapshot));
-            Assert.That(saved.Version, Is.EqualTo(2));
-            Assert.That(saved.Title, Is.EqualTo("Example"));
-            Assert.That(saved.Intent, Is.EqualTo(DownloadIntent.EnqueueAttempt));
-            Assert.That(saved.CreatedAt.Offset, Is.EqualTo(TimeSpan.Zero));
-            Assert.That(saved.CreatedAt, Is.EqualTo(_createdAt));
-        });
+            {
+                Assert.That(saved.RestoreAggregate().Snapshot, Is.EqualTo(aggregate.Snapshot));
+                Assert.That(saved.Version, Is.EqualTo(2));
+                Assert.That(saved.Title, Is.EqualTo("Example"));
+                Assert.That(saved.Intent, Is.EqualTo(DownloadIntent.EnqueueAttempt));
+                Assert.That(saved.CreatedAt.Offset, Is.EqualTo(TimeSpan.Zero));
+                Assert.That(saved.CreatedAt, Is.EqualTo(_createdAt));
+            }
+        );
+
         var attempts = await reopened.Attempts.OrderBy(attempt => attempt.Number).ToArrayAsync();
-        Assert.That(attempts.Select(attempt => attempt.Status), Is.EqualTo(new[] { AttemptStatus.Failed, AttemptStatus.Pending }));
+
+        Assert.That(
+            attempts.Select(attempt => attempt.Status),
+            Is.EqualTo(
+                new[]
+                {
+                    AttemptStatus.Failed,
+                    AttemptStatus.Pending
+                }
+            )
+        );
+
         Assert.That(attempts[1].Id, Is.EqualTo(secondAttemptId));
         Assert.That((await reopened.Artifacts.SingleAsync()).Id, Is.EqualTo(artifactId));
         var stages = await reopened.Stages.ToArrayAsync();
         Assert.That(stages, Has.Length.EqualTo(2));
-        Assert.That(stages.Single(stage => stage.Stage == ProcessingStage.Upload).ReusedFromStageId, Is.EqualTo(firstStageId));
+
+        Assert.That(
+            stages.Single(stage => stage.Stage == ProcessingStage.Upload).ReusedFromStageId,
+            Is.EqualTo(firstStageId)
+        );
+
         var transfer = await reopened.Transfers.SingleAsync();
         Assert.That(transfer.MultipartUploadId, Is.EqualTo("upload-id"));
         Assert.That(transfer.Sha256, Is.EqualTo(new string('a', 64)));
         var session = await reopened.AdminSessions.SingleAsync();
         Assert.That(session.Id, Is.EqualTo(sessionId));
         Assert.That(session.RevokedAt, Is.EqualTo(_createdAt.AddHours(1)));
-        Assert.That(await ScalarAsync(reopened, "SELECT typeof(CreatedAt) FROM Downloads LIMIT 1;"), Is.EqualTo("integer"));
-        Assert.That(await ScalarAsync(reopened, "SELECT typeof(QueuedAt) FROM DownloadAttempts LIMIT 1;"), Is.EqualTo("integer"));
+
+        Assert.That(
+            await ScalarAsync(reopened, "SELECT typeof(CreatedAt) FROM Downloads LIMIT 1;"),
+            Is.EqualTo("integer")
+        );
+
+        Assert.That(
+            await ScalarAsync(reopened, "SELECT typeof(QueuedAt) FROM DownloadAttempts LIMIT 1;"),
+            Is.EqualTo("integer")
+        );
     }
 
     [Test]
@@ -218,14 +338,38 @@ public class AppDbContextTests
     public async Task SimultaneousDuplicateUrlsCannotCreateTwoDownloads()
     {
         using var barrier = new Barrier(2);
-        var outcomes = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => Task.Run(() =>
-        {
-            using var context = CreateContext();
-            context.Downloads.Add(NewDownload());
-            Assert.That(barrier.SignalAndWait(TimeSpan.FromSeconds(10)), Is.True);
-            try { context.SaveChanges(); return true; }
-            catch (DbUpdateException error) when (error.InnerException is SqliteException { SqliteErrorCode: 19 }) { return false; }
-        })));
+
+        var outcomes = await Task.WhenAll(
+                           Enumerable.Range(0, 2)
+                                     .Select(_ => Task.Run(() =>
+                                                 {
+                                                     using var context = CreateContext();
+                                                     context.Downloads.Add(NewDownload());
+
+                                                     Assert.That(
+                                                         barrier.SignalAndWait(TimeSpan.FromSeconds(10)),
+                                                         Is.True
+                                                     );
+
+                                                     try
+                                                     {
+                                                         context.SaveChanges();
+
+                                                         return true;
+                                                     }
+                                                     catch (DbUpdateException error) when
+                                                         (error.InnerException is SqliteException
+                                                          {
+                                                              SqliteErrorCode: 19
+                                                          })
+                                                     {
+                                                         return false;
+                                                     }
+                                                 }
+                                             )
+                                      )
+                       );
+
         Assert.That(outcomes.Count(success => success), Is.EqualTo(1));
         await using var reopened = CreateContext();
         Assert.That(await reopened.Downloads.CountAsync(), Is.EqualTo(1));
@@ -257,21 +401,47 @@ public class AppDbContextTests
     public async Task SimultaneousAttemptsCannotBothBecomeActive()
     {
         DownloadRecord record;
+
         await using (var context = CreateContext())
         {
             record = await AddDownloadAsync(context);
             (await context.Attempts.SingleAsync()).Status = AttemptStatus.Failed;
             await context.SaveChangesAsync();
         }
+
         using var barrier = new Barrier(2);
-        var outcomes = await Task.WhenAll(Enumerable.Range(2, 2).Select(number => Task.Run(() =>
-        {
-            using var context = CreateContext();
-            context.Attempts.Add(NewAttempt(record, number, Guid.NewGuid()));
-            Assert.That(barrier.SignalAndWait(TimeSpan.FromSeconds(10)), Is.True);
-            try { context.SaveChanges(); return true; }
-            catch (DbUpdateException error) when (error.InnerException is SqliteException { SqliteErrorCode: 19 }) { return false; }
-        })));
+
+        var outcomes = await Task.WhenAll(
+                           Enumerable.Range(2, 2)
+                                     .Select(number => Task.Run(() =>
+                                                 {
+                                                     using var context = CreateContext();
+                                                     context.Attempts.Add(NewAttempt(record, number, Guid.NewGuid()));
+
+                                                     Assert.That(
+                                                         barrier.SignalAndWait(TimeSpan.FromSeconds(10)),
+                                                         Is.True
+                                                     );
+
+                                                     try
+                                                     {
+                                                         context.SaveChanges();
+
+                                                         return true;
+                                                     }
+                                                     catch (DbUpdateException error) when
+                                                         (error.InnerException is SqliteException
+                                                          {
+                                                              SqliteErrorCode: 19
+                                                          })
+                                                     {
+                                                         return false;
+                                                     }
+                                                 }
+                                             )
+                                      )
+                       );
+
         Assert.That(outcomes.Count(success => success), Is.EqualTo(1));
         await using var reopened = CreateContext();
         Assert.That(await reopened.Attempts.CountAsync(), Is.EqualTo(2));
@@ -280,8 +450,12 @@ public class AppDbContextTests
     [Test]
     public async Task PersistedQueueCanBeOrderedByTimestampAndId()
     {
-        Guid[] ids = [Guid.Parse("10000000-0000-0000-0000-000000000001"), Guid.Parse("10000000-0000-0000-0000-000000000002"),
-            Guid.Parse("10000000-0000-0000-0000-000000000003")];
+        Guid[] ids =
+        [
+            Guid.Parse("10000000-0000-0000-0000-000000000001"), Guid.Parse("10000000-0000-0000-0000-000000000002"),
+            Guid.Parse("10000000-0000-0000-0000-000000000003")
+        ];
+
         await using (var context = CreateContext())
         {
             for (var index = 2; index >= 0; index--)
@@ -292,11 +466,18 @@ public class AppDbContextTests
                 attempt.QueuedAt = index == 2 ? _createdAt.AddMinutes(1) : _createdAt;
                 context.Attempts.Add(attempt);
             }
+
             await context.SaveChangesAsync();
         }
+
         await using var reopened = CreateContext();
+
         var queue = await reopened.Attempts.Where(attempt => attempt.Status == AttemptStatus.Pending)
-            .OrderBy(attempt => attempt.QueuedAt).ThenBy(attempt => attempt.Id).Select(attempt => attempt.Id).ToArrayAsync();
+                                  .OrderBy(attempt => attempt.QueuedAt)
+                                  .ThenBy(attempt => attempt.Id)
+                                  .Select(attempt => attempt.Id)
+                                  .ToArrayAsync();
+
         Assert.That(queue, Is.EqualTo(ids));
     }
 
@@ -321,6 +502,7 @@ public class AppDbContextTests
     public async Task ConcurrentUploadAndCancelTransitionsUseTheSavedVersion(bool cancellationWins)
     {
         Guid downloadId;
+
         await using (var seed = CreateContext())
         {
             var record = NewDownload();
@@ -342,17 +524,30 @@ public class AppDbContextTests
         var winningAggregate = winner.RestoreAggregate();
         var losingAggregate = loser.RestoreAggregate();
         DownloadEvent cancel = new RequestCancel();
-        DownloadEvent uploaded = new StageSucceeded(winner.CurrentAttemptId, DownloadState.Uploading, PublicationConfirmed: true);
+
+        DownloadEvent uploaded = new StageSucceeded(
+            winner.CurrentAttemptId,
+            DownloadState.Uploading,
+            PublicationConfirmed: true
+        );
+
         var winningTransition = winningAggregate.Apply(cancellationWins ? cancel : uploaded);
         var losingTransition = losingAggregate.Apply(cancellationWins ? uploaded : cancel);
         Assert.That(winningTransition.IsAccepted && losingTransition.IsAccepted, Is.True);
         winner.Capture(winningAggregate, winningTransition.Intent, _createdAt.AddSeconds(1));
         loser.Capture(losingAggregate, losingTransition.Intent, _createdAt.AddSeconds(1));
-        second.Stages.Add(new StageExecutionRecord
-        {
-            Id = Guid.NewGuid(), DownloadId = downloadId, AttemptId = loser.CurrentAttemptId,
-            Stage = ProcessingStage.Upload, Status = StageStatus.Succeeded
-        });
+
+        second.Stages.Add(
+            new StageExecutionRecord
+            {
+                Id = Guid.NewGuid(),
+                DownloadId = downloadId,
+                AttemptId = loser.CurrentAttemptId,
+                Stage = ProcessingStage.Upload,
+                Status = StageStatus.Succeeded
+            }
+        );
+
         await first.SaveChangesAsync();
         await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => second.SaveChangesAsync());
 
@@ -368,6 +563,7 @@ public class AppDbContextTests
     public async Task RetryAndNewAttemptCanBeSavedAtomicallyWithoutLosingHistory()
     {
         Guid downloadId;
+
         await using (var context = CreateContext())
         {
             var record = await AddDownloadAsync(context);
@@ -386,6 +582,7 @@ public class AppDbContextTests
             await context.SaveChangesAsync();
             await transaction.CommitAsync();
         }
+
         await using var reopened = CreateContext();
         Assert.That((await reopened.Downloads.SingleAsync()).Id, Is.EqualTo(downloadId));
         var attempts = await reopened.Attempts.OrderBy(attempt => attempt.Number).ToArrayAsync();
@@ -398,6 +595,7 @@ public class AppDbContextTests
     public async Task RollbackDoesNotLeaveANewAttemptOrChangedLifecycle()
     {
         Guid downloadId;
+
         await using (var context = CreateContext())
         {
             var record = await AddDownloadAsync(context);
@@ -413,6 +611,7 @@ public class AppDbContextTests
             await context.SaveChangesAsync();
             await transaction.RollbackAsync();
         }
+
         await using var reopened = CreateContext();
         var saved = await reopened.Downloads.SingleAsync();
         Assert.That(saved.Id, Is.EqualTo(downloadId));
@@ -428,19 +627,34 @@ public class AppDbContextTests
         await using var context = CreateContext();
         var first = await AddDownloadAsync(context);
         var second = await AddDownloadAsync(context, "https://example.com/second");
+
         var artifact = new DownloadArtifactRecord
         {
-            Id = Guid.NewGuid(), DownloadId = first.Id, WorkspaceGeneration = first.WorkspaceGeneration,
-            Kind = ArtifactKind.Prepared, RelativePath = "result.mp4", IsReady = true
+            Id = Guid.NewGuid(),
+            DownloadId = first.Id,
+            WorkspaceGeneration = first.WorkspaceGeneration,
+            Kind = ArtifactKind.Prepared,
+            RelativePath = "result.mp4",
+            IsReady = true
         };
+
         context.Artifacts.Add(artifact);
         await context.SaveChangesAsync();
-        context.Transfers.Add(new StorageTransferRecord
-        {
-            Id = Guid.NewGuid(), DownloadId = second.Id, ArtifactId = artifact.Id,
-            PublicationId = second.PublicationId, ObjectKey = "result.mp4", ExpectedSize = 0,
-            CreatedAt = _createdAt, UpdatedAt = _createdAt
-        });
+
+        context.Transfers.Add(
+            new StorageTransferRecord
+            {
+                Id = Guid.NewGuid(),
+                DownloadId = second.Id,
+                ArtifactId = artifact.Id,
+                PublicationId = second.PublicationId,
+                ObjectKey = "result.mp4",
+                ExpectedSize = 0,
+                CreatedAt = _createdAt,
+                UpdatedAt = _createdAt
+            }
+        );
+
         await AssertConstraintViolation(() => context.SaveChangesAsync());
     }
 
@@ -450,11 +664,18 @@ public class AppDbContextTests
         await using var context = CreateContext();
         var first = await AddDownloadAsync(context);
         var second = await AddDownloadAsync(context, "https://example.com/second");
-        context.Stages.Add(new StageExecutionRecord
-        {
-            Id = Guid.NewGuid(), DownloadId = second.Id, AttemptId = first.CurrentAttemptId,
-            Stage = ProcessingStage.Download, Status = StageStatus.Pending
-        });
+
+        context.Stages.Add(
+            new StageExecutionRecord
+            {
+                Id = Guid.NewGuid(),
+                DownloadId = second.Id,
+                AttemptId = first.CurrentAttemptId,
+                Stage = ProcessingStage.Download,
+                Status = StageStatus.Pending
+            }
+        );
+
         await AssertConstraintViolation(() => context.SaveChangesAsync());
     }
 
@@ -474,11 +695,19 @@ public class AppDbContextTests
     {
         await using var context = CreateContext();
         var record = await AddDownloadAsync(context);
-        context.Stages.Add(new StageExecutionRecord
-        {
-            Id = Guid.NewGuid(), DownloadId = record.Id, AttemptId = record.CurrentAttemptId,
-            Stage = ProcessingStage.Download, Status = StageStatus.Running, Progress = progress
-        });
+
+        context.Stages.Add(
+            new StageExecutionRecord
+            {
+                Id = Guid.NewGuid(),
+                DownloadId = record.Id,
+                AttemptId = record.CurrentAttemptId,
+                Stage = ProcessingStage.Download,
+                Status = StageStatus.Running,
+                Progress = progress
+            }
+        );
+
         await AssertConstraintViolation(() => context.SaveChangesAsync());
     }
 
@@ -488,10 +717,14 @@ public class AppDbContextTests
     [TestCase("Data Source=shared;Mode=Memory")]
     public void RegistrationRejectsInvalidDatabaseConfiguration(string? connectionString)
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["ConnectionStrings:AppDatabase"] = connectionString
-        }).Build();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+                                                           new Dictionary<string, string?>
+                                                           {
+                                                               ["ConnectionStrings:AppDatabase"] = connectionString
+                                                           }
+                                                       )
+                                                      .Build();
+
         var services = new ServiceCollection();
         services.AddAppDatabase(configuration);
         using var provider = services.BuildServiceProvider();
@@ -518,29 +751,50 @@ public class AppDbContextTests
     private AppDbContext CreateContext() => new(_provider.GetRequiredService<DbContextOptions<AppDbContext>>());
 
     private static IConfiguration CreateConfiguration(string path) =>
-        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["ConnectionStrings:AppDatabase"] = new SqliteConnectionStringBuilder { DataSource = path }.ToString()
-        }).Build();
+        new ConfigurationBuilder().AddInMemoryCollection(
+                                       new Dictionary<string, string?>
+                                       {
+                                           ["ConnectionStrings:AppDatabase"] =
+                                               new SqliteConnectionStringBuilder { DataSource = path }.ToString()
+                                       }
+                                   )
+                                  .Build();
 
-    private static DownloadRecord NewDownload(string url = "https://example.com/video", string? normalizedUrl = null, Guid? attemptId = null) =>
-        DownloadRecord.Create(Download.Create(Guid.NewGuid(), attemptId ?? Guid.NewGuid(), Guid.NewGuid()),
-            url, normalizedUrl ?? url, Guid.NewGuid(), _createdAt);
+    private static DownloadRecord NewDownload(
+        string url = "https://example.com/video",
+        string? normalizedUrl = null,
+        Guid? attemptId = null
+    ) =>
+        DownloadRecord.Create(
+            Download.Create(Guid.NewGuid(), attemptId ?? Guid.NewGuid(), Guid.NewGuid()),
+            url,
+            normalizedUrl ?? url,
+            Guid.NewGuid(),
+            _createdAt
+        );
 
-    private static DownloadAttemptRecord NewAttempt(DownloadRecord record, int number = 1, Guid? id = null, AttemptStatus? status = null) => new()
+    private static DownloadAttemptRecord
+        NewAttempt(DownloadRecord record, int number = 1, Guid? id = null, AttemptStatus? status = null) => new()
     {
-        Id = id ?? record.CurrentAttemptId, DownloadId = record.Id, Number = number,
+        Id = id ?? record.CurrentAttemptId,
+        DownloadId = record.Id,
+        Number = number,
         Reason = number == 1 ? AttemptReason.Initial : AttemptReason.Retry,
         InitialState = record.ResumeState ?? DownloadState.Downloading,
-        Status = status ?? record.AttemptStatus, QueuedAt = _createdAt
+        Status = status ?? record.AttemptStatus,
+        QueuedAt = _createdAt
     };
 
-    private static async Task<DownloadRecord> AddDownloadAsync(AppDbContext context, string url = "https://example.com/video")
+    private static async Task<DownloadRecord> AddDownloadAsync(
+        AppDbContext context,
+        string url = "https://example.com/video"
+    )
     {
         var record = NewDownload(url);
         context.Downloads.Add(record);
         context.Attempts.Add(NewAttempt(record));
         await context.SaveChangesAsync();
+
         return record;
     }
 
@@ -554,12 +808,17 @@ public class AppDbContextTests
     private static async Task<object?> ScalarAsync(AppDbContext context, string sql)
     {
         await context.Database.OpenConnectionAsync();
+
         try
         {
             await using var command = context.Database.GetDbConnection().CreateCommand();
             command.CommandText = sql;
+
             return await command.ExecuteScalarAsync();
         }
-        finally { await context.Database.CloseConnectionAsync(); }
+        finally
+        {
+            await context.Database.CloseConnectionAsync();
+        }
     }
 }

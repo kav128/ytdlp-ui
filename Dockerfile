@@ -5,7 +5,7 @@ RUN npm ci --no-audit --no-fund
 COPY src/Ytdlp.Ui.Client/ ./
 RUN npm run build
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
 WORKDIR /source
 COPY global.json Directory.Build.props Directory.Packages.props NuGet.Config ./
 COPY src/Directory.Build.props src/Directory.Build.props
