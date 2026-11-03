@@ -16,7 +16,7 @@ public abstract class SetupBase
 
         try
         {
-            Client = Factory.CreateClient();
+            Client = Factory.CreateBrowserClient();
         }
         catch
         {

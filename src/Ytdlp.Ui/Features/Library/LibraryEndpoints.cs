@@ -1,3 +1,4 @@
+using Ytdlp.Ui.Infrastructure.Authentication;
 using Ytdlp.Ui.Features.Downloads;
 using Ytdlp.Ui.Infrastructure.Mocking;
 
@@ -11,13 +12,17 @@ public static class LibraryEndpoints
 
         group.MapGet("/", (DemoStore store) => store.GetFiles());
 
-        group.MapGet("/{id}/content", (string id, DemoStore store) =>
-            store.GetFile(id) is { } file && store.GetContent(id) is { } content
-                ? Results.Stream(new MemoryStream(content, writable: false), "text/plain; charset=utf-8", file.Name)
-                : Results.NotFound());
+        group.MapGet(
+            "/{id}/content",
+            (string id, DemoStore store) =>
+                store.GetFile(id) is { } file && store.GetContent(id) is { } content
+                    ? Results.Stream(new MemoryStream(content, writable: false), "text/plain; charset=utf-8", file.Name)
+                    : Results.NotFound()
+        );
 
         group.MapDelete("/{id}", (string id, DemoStore store) => DownloadEndpoints.ToResponse(store.DeleteFile(id)))
-             .RequireAuthorization("Admin");
+             .RequireAuthorization("Admin")
+             .AddEndpointFilter<AdminAntiforgeryFilter>();
 
         return endpoints;
     }

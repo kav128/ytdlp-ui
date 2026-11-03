@@ -5,10 +5,47 @@ using Ytdlp.Ui.Features.Library;
 using Ytdlp.Ui.Infrastructure.Mocking;
 using Ytdlp.Ui.Infrastructure.Persistence;
 using Ytdlp.Ui.Infrastructure.Authentication;
+using System.Net;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Options;
+using Ytdlp.Ui.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
+
+builder.Services.AddOptions<ReverseProxyOptions>()
+       .Bind(builder.Configuration.GetSection("ReverseProxy"))
+       .Validate(
+            settings => settings.KnownProxies.All(value => IPAddress.TryParse(value, out _)),
+            "ReverseProxy:KnownProxies must contain IP addresses."
+        )
+       .Validate(
+            settings => settings.KnownNetworks.All(value => System.Net.IPNetwork.TryParse(value, out _)),
+            "ReverseProxy:KnownNetworks must contain CIDR networks."
+        )
+       .ValidateOnStart();
+
+builder.Services.AddOptions<ForwardedHeadersOptions>()
+       .Configure<IOptions<ReverseProxyOptions>>((options, configured) =>
+            {
+                var settings = configured.Value;
+                options.KnownProxies.Clear();
+                options.KnownIPNetworks.Clear();
+                foreach (var proxy in settings.KnownProxies) options.KnownProxies.Add(IPAddress.Parse(proxy));
+
+                foreach (var network in settings.KnownNetworks)
+                    options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
+
+                if (settings.KnownProxies.Length > 0 || settings.KnownNetworks.Length > 0)
+                    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+                                             | ForwardedHeaders.XForwardedProto
+                                             | ForwardedHeaders.XForwardedHost;
+
+                options.AllowedHosts = settings.AllowedHosts;
+            }
+        );
+
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddAppDatabase(builder.Configuration);
 builder.Services.AddAdminAuthentication(builder.Configuration);
@@ -17,8 +54,10 @@ builder.Services.AddSingleton<DemoStore>();
 var app = builder.Build();
 
 app.UseExceptionHandler();
+app.UseForwardedHeaders();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 

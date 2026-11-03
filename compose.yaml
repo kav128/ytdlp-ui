@@ -3,6 +3,13 @@ services:
     build: .
     ports:
       - "5080:8080"
+    environment:
+      Oidc__Authority: ${OIDC_AUTHORITY:-https://authentik.example.test/application/o/ytdlp-ui/}
+      Oidc__ClientId: ${OIDC_CLIENT_ID:-ytdlp-ui}
+      Oidc__ClientSecret: ${OIDC_CLIENT_SECRET:-replace-with-authentik-client-secret}
+      Oidc__GroupsClaim: ${OIDC_GROUPS_CLAIM:-groups}
+      Oidc__AdminGroup: ${OIDC_ADMIN_GROUP:-ytdlp-ui-admins}
+      Paths__DataProtectionKeysDirectory: /data/keys
     volumes:
       - app-data:/data
 

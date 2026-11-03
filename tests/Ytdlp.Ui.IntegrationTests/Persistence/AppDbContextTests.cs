@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Ytdlp.Ui.Domain;
@@ -49,7 +50,7 @@ public class AppDbContextTests
         await using var context = CreateContext();
         Assert.That(File.Exists(_databasePath), Is.True);
         var migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.That(migrations, Has.Length.EqualTo(1));
+        Assert.That(migrations, Has.Length.EqualTo(2));
         Assert.That(migrations[0], Does.EndWith("_InitialPersistence"));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
         Assert.That(context.Database.HasPendingModelChanges(), Is.False);
@@ -70,67 +71,75 @@ public class AppDbContextTests
     }
 
     [Test]
-    public async Task RefreshHashEqualityAndUniqueIndexCompareByteContentAndAllowNulls()
+    public async Task ProtectedTicketsRoundTripAndRevokedLegacyRowsRemainReadable()
     {
-        var hash = System.Security.Cryptography.SHA256.HashData("refresh"u8);
+        var ticket = new byte[]
+        {
+            0,
+            1,
+            2,
+            255
+        };
 
         await using (var context = CreateContext())
         {
             context.AdminSessions.AddRange(
                 new AdminSessionRecord
                 {
-                    Id = "first",
+                    Id = "active",
                     IssuedAt = _createdAt,
                     ExpiresAt = _createdAt.AddHours(12),
-                    RefreshTokenHash = hash
+                    Issuer = "issuer",
+                    Subject = "subject",
+                    ProtectedTicket = ticket
                 },
                 new AdminSessionRecord
                 {
-                    Id = "null-first",
+                    Id = "legacy",
                     IssuedAt = _createdAt,
-                    ExpiresAt = _createdAt.AddHours(12)
-                },
-                new AdminSessionRecord
-                {
-                    Id = "null-second",
-                    IssuedAt = _createdAt,
-                    ExpiresAt = _createdAt.AddHours(12)
+                    ExpiresAt = _createdAt.AddHours(12),
+                    RevokedAt = _createdAt
                 }
             );
 
             await context.SaveChangesAsync();
         }
 
-        var equalHash = hash.ToArray();
+        await using var reopened = CreateContext();
+        var stored = await reopened.AdminSessions.SingleAsync(session => session.Id == "active");
+        Assert.That(stored.ProtectedTicket, Is.EqualTo(ticket));
+        Assert.That(stored.Issuer, Is.EqualTo("issuer"));
+        Assert.That(stored.Subject, Is.EqualTo("subject"));
+        var legacy = await reopened.AdminSessions.SingleAsync(session => session.Id == "legacy");
+        Assert.That(legacy.ProtectedTicket, Is.Null);
+        Assert.That(legacy.RevokedAt, Is.Not.Null);
+    }
 
-        await using (var reopened = CreateContext())
-        {
-            var stored = await reopened.AdminSessions.SingleAsync(session => session.RefreshTokenHash == equalHash);
-            Assert.That(stored.Id, Is.EqualTo("first"));
-            Assert.That(stored.RefreshTokenHash, Is.EqualTo(equalHash));
+    [Test]
+    public async Task UpgradeRevokesOldSessionsWithoutLosingDownloadHistory()
+    {
+        var services = new ServiceCollection();
+        services.AddAppDatabase(CreateConfiguration(Path.Combine(_directory, "upgrade.db")));
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var migrator = context.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+        await migrator.MigrateAsync("20261002192408_InitialPersistence");
+        var download = await AddDownloadAsync(context);
 
-            Assert.That(
-                await reopened.AdminSessions.CountAsync(session => session.RefreshTokenHash == null),
-                Is.EqualTo(2)
-            );
+        await context.Database.ExecuteSqlRawAsync(
+            "INSERT INTO AdminSessions (Id, IssuedAt, ExpiresAt, RefreshTokenHash) VALUES ('old-session', 1, 9999999999999, X'010203');"
+        );
 
-            reopened.AdminSessions.Add(
-                new AdminSessionRecord
-                {
-                    Id = "duplicate",
-                    IssuedAt = _createdAt,
-                    ExpiresAt = _createdAt.AddHours(12),
-                    RefreshTokenHash = equalHash
-                }
-            );
-
-            var exception = await Assert.ThrowsAsync<DbUpdateException>(() => reopened.SaveChangesAsync());
-            Assert.That(exception!.InnerException, Is.TypeOf<SqliteException>());
-            Assert.That(((SqliteException)exception.InnerException!).SqliteErrorCode, Is.EqualTo(19));
-        }
-
-        await using var final = CreateContext();
-        Assert.That(await final.AdminSessions.CountAsync(), Is.EqualTo(3));
+        await context.Database.MigrateAsync();
+        Assert.That(await context.Downloads.CountAsync(), Is.EqualTo(1));
+        Assert.That((await context.Downloads.SingleAsync()).Id, Is.EqualTo(download.Id));
+        Assert.That(await context.Attempts.CountAsync(), Is.EqualTo(1));
+        var legacy = await context.AdminSessions.SingleAsync();
+        Assert.That(legacy.Id, Is.EqualTo("old-session"));
+        Assert.That(legacy.RevokedAt, Is.Not.Null);
+        Assert.That(legacy.ProtectedTicket, Is.Null);
+        Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
     }
 
     [Test]

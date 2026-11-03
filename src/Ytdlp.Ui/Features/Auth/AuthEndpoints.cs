@@ -1,5 +1,6 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
+using AdminAuthentication = Ytdlp.Ui.Infrastructure.Authentication.AuthenticationServiceCollectionExtensions;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
 using Ytdlp.Ui.Infrastructure.Authentication;
 
 namespace Ytdlp.Ui.Features.Auth;
@@ -10,36 +11,67 @@ public static class AuthEndpoints
     {
         var group = endpoints.MapGroup("/api/auth");
 
-        group.MapGet("/session", (HttpContext context) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            if (context.Request.Headers.ContainsKey("Authorization") && context.User.Identity?.IsAuthenticated != true)
-                return Results.Unauthorized();
-            return Results.Ok(new { authenticated = context.User.IsInRole("Admin") });
-        });
+        group.AddEndpointFilter(async (context, next) =>
+            {
+                context.HttpContext.Response.Headers.CacheControl = "no-store";
 
-        group.MapPost("/login", async (LoginRequest request, AuthenticationService authentication, HttpContext context) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            var tokens = await authentication.LoginAsync(request.Username, request.Password, context.RequestAborted);
-            return tokens is null ? Results.Unauthorized() : Results.Ok(tokens);
-        });
+                return await next(context);
+            }
+        );
 
-        group.MapPost("/refresh", async (RefreshRequest request, AuthenticationService authentication, HttpContext context) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            var tokens = await authentication.RefreshAsync(request.RefreshToken, context.RequestAborted);
-            return tokens is null ? Results.Unauthorized() : Results.Ok(tokens);
-        });
+        group.MapGet(
+            "/session",
+            (HttpContext context) => Results.Ok(
+                new
+                {
+                    authenticated = context.User.IsInRole("Admin"),
+                    sessionId = context.User.IsInRole("Admin")
+                                    ? context.User.FindFirst("ui_session_id")?.Value
+                                    : null
+                }
+            )
+        );
 
-        group.MapPost("/logout", async (ClaimsPrincipal user, AuthenticationService authentication, HttpContext context) =>
-        {
-            context.Response.Headers.CacheControl = "no-store";
-            var id = user.FindFirstValue(JwtRegisteredClaimNames.Jti)!;
-            await authentication.RevokeAsync(id, context.RequestAborted);
-            return Results.NoContent();
-        }).RequireAuthorization("Admin");
+        group.MapGet(
+            "/login",
+            (string? returnUrl) =>
+            {
+                var target = returnUrl ?? "/";
+
+                if (!IsLocalPath(target)) return Results.BadRequest();
+
+                return Results.Challenge(
+                    new AuthenticationProperties { RedirectUri = target },
+                    [AdminAuthentication.OidcScheme]
+                );
+            }
+        );
+
+        group.MapGet(
+                  "/csrf",
+                  (IAntiforgery antiforgery, HttpContext context) =>
+                      Results.Ok(new { requestToken = antiforgery.GetAndStoreTokens(context).RequestToken })
+              )
+             .RequireAuthorization("Admin");
+
+        group.MapPost(
+                  "/logout",
+                  async (HttpContext context) =>
+                  {
+                      await context.SignOutAsync(AdminAuthentication.CookieScheme);
+
+                      return Results.NoContent();
+                  }
+              )
+             .RequireAuthorization("Admin")
+             .AddEndpointFilter<AdminAntiforgeryFilter>();
 
         return endpoints;
     }
+
+    private static bool IsLocalPath(string value) => value.StartsWith('/')
+                                                  && !value.StartsWith("//")
+                                                  && !value.StartsWith("/\\")
+                                                  && !value.Any(char.IsControl)
+                                                  && !value.Contains('\\');
 }

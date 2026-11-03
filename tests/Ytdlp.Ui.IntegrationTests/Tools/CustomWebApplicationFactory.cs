@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,7 +13,9 @@ namespace Ytdlp.Ui.IntegrationTests.Tools;
 
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
+    public FakeOidcProvider Provider { get; } = new();
     private readonly string? _directory;
+    private HttpClient? _backchannel;
     private readonly string _databasePath;
     private readonly Action<IWebHostBuilder>? _configure;
 
@@ -28,6 +31,14 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _configure = configure;
     }
 
+    public HttpClient CreateBrowserClient() => CreateClient(
+        new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            AllowAutoRedirect = false
+        }
+    );
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -41,26 +52,25 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
                                               new Dictionary<string, string?>
                                               {
-                                                  ["Admin:Username"] = "admin",
-                                                  ["Admin:Password"] = "demo-password",
-                                                  ["Jwt:Issuer"] = "ytdlp-ui-demo",
-                                                  ["Jwt:Audience"] = "ytdlp-ui",
-                                                  ["Jwt:SigningKey"] =
-                                                      "ZGVtby1vbmx5LXNpZ25pbmcta2V5LXJlcGxhY2UtYmVmb3JlLXByb2R1Y3Rpb24tMjAyNg=="
+                                                  ["Oidc:Authority"] = FakeOidcProvider.Authority,
+                                                  ["Oidc:ClientId"] = FakeOidcProvider.ClientId,
+                                                  ["Oidc:ClientSecret"] = FakeOidcProvider.ClientSecret,
+                                                  ["Oidc:GroupsClaim"] = "groups",
+                                                  ["Oidc:AdminGroup"] = "admins",
+                                                  ["Paths:DataProtectionKeysDirectory"] = Path.Combine(
+                                                      Path.GetDirectoryName(_databasePath)!,
+                                                      "keys"
+                                                  )
                                               }
                                           )
         );
 
-        builder.ConfigureTestServices(services => services.AddDataProtection()
-                                                          .PersistKeysToFileSystem(
-                                                               new DirectoryInfo(
-                                                                   Path.Combine(
-                                                                       Path.GetDirectoryName(_databasePath)!,
-                                                                       "keys"
-                                                                   )
-                                                               )
-                                                           )
-                                                          .UseEphemeralDataProtectionProvider()
+        _backchannel = new HttpClient(Provider, disposeHandler: false);
+
+        builder.ConfigureTestServices(services => services.Configure<OpenIdConnectOptions>(
+                                          "Authentik",
+                                          options => options.Backchannel = _backchannel
+                                      )
         );
 
         builder.ConfigureLogging(logging =>
@@ -75,6 +85,12 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
+
+        if (disposing)
+        {
+            _backchannel?.Dispose();
+            Provider.Dispose();
+        }
 
         if (disposing && _directory is not null && Directory.Exists(_directory))
         {

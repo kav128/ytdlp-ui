@@ -1,400 +1,212 @@
 # yt-dlp WebUI
 
-Приложение по [спецификациям OpenSpec](openspec/README.md): ASP.NET Core 10 Minimal API и React с отдельными каталогами
-и сборками. Kestrel раздает API и собранный интерфейс с одного адреса.
+ASP.NET Core 10 Minimal API и React составляют одно приложение: Kestrel раздает API и собранный UI. Требования целевого
+MVP находятся в [OpenSpec](openspec/README.md), согласованный переход на Authentik и отправку файлов —
+в [активном change](openspec/changes/authentik-sso-and-file-uploads/proposal.md).
 
-Сейчас реализованы настоящая авторизация и UI с моковыми заданиями и библиотекой: вход администратора, очередь и история
-загрузок, создание по URL, повтор, отмена и удаление файла. Интерфейс следует Material 3, адаптируется к телефону и
-десктопу, выбирает системную тему и язык EN/RU по браузеру. Форма входа открывается справа сверху на десктопе;
-административные функции появляются на той же странице после проверки входа.
+Реализован вход через Authentik по OIDC, административный доступ по группе, сохраняемые серверные cookie-сессии и
+CSRF-защита команд. SQLite создается и мигрирует до приема запросов; сессии, их истечение и отзыв сохраняются при
+перезапуске с прежними БД и ключами Data Protection.
 
-Моковый API хранит данные заданий и библиотеки в памяти. В библиотеке находятся три небольших демонстрационных текстовых
-файла, которые действительно можно скачать. Очередь содержит примеры разных состояний, включая ошибку отправки и ошибку
-очистки. Создание и повтор ставят задания в очередь, но мок не выполняет реальные загрузки и не увеличивает прогресс по
-таймеру. После перезапуска изменения этих данных сбрасываются. Авторизация использует SQLite: вход, проверку активности
-сессии, обновление токенов и отзыв. Подключение остальных API к SQLite, MinIO, yt-dlp и FFmpeg относится к следующим
-этапам. Сейчас внешние сервисы не требуются.
-
-Каталоги компонентов созданы по [техническому проекту](openspec/design.md); пустые сохраняются в Git через `.gitkeep`.
-
-Начата поэтапная реализация настоящего бэкенда. В первой итерации добавлен агрегат `Download` в `src/Ytdlp.Ui/Domain/`:
-он хранит состояние задания и применяет события через внутренний автомат. Свойства доступны только для чтения; переход
-выполняется через `Apply`, доступные действия вычисляются из текущего состояния. `Snapshot` возвращает неизменяемый
-снимок для хранения, `Restore` восстанавливает агрегат из сохраненного снимка. Недопустимое событие не меняет агрегат.
-Доменная модель не выполняет ввод-вывод. API пока использует прежний мок; подключение агрегата к SQLite, командам и
-worker выполняется в следующих итерациях.
-
-Во второй итерации добавлены `AppDbContext` и отдельные EF-сущности для задания, попыток, этапов, артефактов, отправок в
-S3 и сессий администратора в `Infrastructure/Persistence/`. Конфигурации сущностей находятся в
-`AppDbContext.OnModelCreating`. Первая миграция создает схему SQLite. Уникальные индексы защищают нормализованный URL,
-номер попытки и единственную активную попытку задания. Версия записи задания служит concurrency token; EF отклоняет
-сохранение устаревшего состояния. `DownloadRecord` сохраняет снимок агрегата, намерение следующего действия и
-восстанавливает агрегат. Даты хранятся как Unix milliseconds, состояния — строками. `AddAppDatabase` напрямую
-настраивает `AppDbContext` через `AddDbContext` с конфигурацией хоста: foreign keys и ожидание блокировки до пяти
-секунд. Регистрация вызывается в `Program.cs`, собственных фабрик контекста нет.
-
-При запуске `Program.cs` вызывает `AppDbContext.InitializeAsync` в отдельном scope до приема HTTP-запросов: создается
-каталог БД, включается WAL и применяются миграции. Повторный запуск сохраняет существующие данные и применяет только
-недостающие миграции. Ошибка доступа к каталогу, открытия БД или миграции прерывает запуск.
-
-Успешный `POST /api/auth/login` сохраняет `AdminSessionRecord` через имеющийся `AppDbContext` до возврата токенов: `Id`
-совпадает с `jti` JWT, `IssuedAt` — время входа, `ExpiresAt` — абсолютное истечение сессии через 12 часов,
-`RevokedAt=null`. Access token действует 5 минут; `expiresAt` в JSON — его срок, совпадающий с JWT `exp`. Refresh
-token — случайные 32 байта в стандартном Base64 (44 символа с padding); в SQLite хранится только SHA-256 его UTF-8
-строки в `RefreshTokenHash`: `byte[]?`, BLOB из 32 байт. Размер случайных данных определяется `SHA256.HashSize`, длина
-Base64 — стандартным API; refresh проверяет длину, формат и размер декодированных данных. Токен передается в JSON,
-включая символы `+`, `/` и `=`. Неверные учетные данные не создают запись; ошибка записи прерывает вход без токенов.
-
-`POST /api/auth/refresh` принимает `{ refreshToken }` и атомарно заменяет его хеш, возвращая новую пару. При двух
-одновременных запросах с прежним refresh ровно один может получить `200`, другой получает `401`; старый токен больше не
-работает. Обновление не продлевает 12-часовую сессию. Access token, выданный перед ее истечением, ограничен оставшимся
-временем. Активность сессии и logout проверяются/сохраняются в SQLite, поэтому действующие токены переживают рестарт;
-выход сразу отзывает оба вида токенов. Запись с `RefreshTokenHash=null` не считается активной.
-
-Авторизация находится в `Infrastructure/Authentication/`: scoped-сервис `AuthenticationService` получает
-`IOptions<AdminOptions>`, `IOptions<JwtOptions>`, `AppDbContext` и `TimeProvider` через DI и выполняет вход, refresh,
-проверку активности и отзыв. Типизированные настройки связаны с прежними секциями `Admin` и `Jwt`; выдача и проверка JWT
-используют одни options и `JwtOptions.GetSigningKeyBytes()` для декодирования ключа Base64. Отсутствующий, пустой,
-некорректный Base64 или ключ короче 32 декодированных байт прерывает запуск с сообщением без значения секрета. Сервис
-владеет экземпляром SHA-256 и освобождает его при завершении scope.
-`AuthenticationServiceCollectionExtensions.AddAdminAuthentication` регистрирует сервис, JWT Bearer и политику
-администратора. `TimeProvider.System` зарегистрирован singleton в `Program.cs`. HTTP-обработчики вызывают сервис, а
-JWT-handler получает его из scope запроса. Моковый `DemoStore` заданий и библиотеки зарегистрирован отдельно в
-`Program.cs`; он не участвует в авторизации.
-
-## Спецификации OpenSpec
-
-Требования целевого MVP находятся в [openspec/specs/](openspec/specs/), их карта и границы —
-в [openspec/README.md](openspec/README.md). Они включают еще не реализованные возможности; фактический статус описан
-выше. Общий [технический проект](openspec/design.md) сохраняет предлагаемые решения и открытые вопросы отдельно от
-обязательных требований. Новые изменения оформляются в `openspec/changes/` по схеме `spec-driven`.
-
-Просмотр и проверка из корня репозитория с установленным CLI OpenSpec:
-
-```powershell
-openspec list --specs
-openspec show download-lifecycle --type spec
-openspec validate --all --strict --no-interactive
-```
+Задания и каталог пока демонстрационные: доступны интерфейс очереди, создание по URL, повтор, отмена и удаление трех
+текстовых файлов. Изменения этих данных сбрасываются при перезапуске. Агрегат задания и постоянная схема истории уже
+существуют, но подключение API к ним, MinIO, ручная отправка файлов и реальные медиапроцессы выполняются в следующих
+этапах. Прогресс не симулируется. Интерфейс поддерживает телефон/десктоп, системную тему и EN/RU по браузеру.
 
 ## Структура
 
 ```text
 Ytdlp.Ui.slnx
-global.json
 Directory.Build.props
 Directory.Packages.props
-NuGet.Config
+global.json
 Dockerfile
 compose.yaml
 .github/workflows/ci.yml
-openspec/
-  config.yaml
-  README.md
-  design.md
-  specs/*/spec.md
-  changes/
+openspec/{README.md,design.md,specs/,changes/}
 src/
   Directory.Build.props
   Ytdlp.Ui/
-    Ytdlp.Ui.csproj
-    Program.cs
-    Features/Hello/
-    Features/{Auth,Downloads,Library}/
+    Features/{Auth,Downloads,Library,Hello}/
     Domain/
-      Download.cs
-      DownloadStateMachine.cs
-      Events/
-      ValueObjects/
-      Primitives/
-    Processing/
-    Infrastructure/{Persistence,Media,Storage,Authentication}/
-    Infrastructure/Persistence/{Entities,Migrations}/
-    Infrastructure/Mocking/
+    Infrastructure/{Authentication,Persistence,Mocking}/
     Configuration/
   Ytdlp.Ui.Client/
     package.json
     package-lock.json
-    src/{api,components,features,locales,styles,test}/
+    src/
     dist/  # результат сборки, не коммитится
 tests/
   Directory.Build.props
-  Ytdlp.Ui.Tests/               # unit-тесты домена
-  Ytdlp.Ui.IntegrationTests/   # HTTP и файловая SQLite
+  Ytdlp.Ui.Tests/             # доменные unit-тесты
+  Ytdlp.Ui.IntegrationTests/  # HTTP, OIDC и файловая SQLite
     SetupBase.cs
     SetupGlobal.cs
     Tools/CustomWebApplicationFactory.cs
 ```
 
+Версии NuGet управляются через CPM в `Directory.Packages.props`, общие тестовые зависимости находятся в
+`tests/Directory.Build.props`. Интеграционные зависимости подключены только соответствующему проекту. Каждый вложенный
+props импортирует родительский; solution содержит проекты и общие файлы как Solution Items.
+
+## Настройка Authentik и конфигурация
+
+В существующем Authentik создайте confidential OAuth2/OIDC provider с Authorization Code и приложением для WebUI.
+Выберите per-provider issuer и зарегистрируйте точный внешний HTTPS callback `https://<адрес-приложения>/signin-oidc`.
+Scopes `openid` и `profile` должны возвращать `sub` и настроенный claim групп, в том числе через UserInfo. Участники
+выбранной группы получают административный доступ; остальные видят публичный каталог.
+
+| Параметр                             | Назначение                                                                                 |
+|--------------------------------------|--------------------------------------------------------------------------------------------|
+| `Oidc__Authority`                    | HTTPS issuer приложения, например `https://authentik.example.test/application/o/ytdlp-ui/` |
+| `Oidc__ClientId`                     | Идентификатор confidential client                                                          |
+| `Oidc__ClientSecret`                 | Секрет клиента только на бэкенде                                                           |
+| `Oidc__GroupsClaim`                  | Claim с группами, обычно `groups`                                                          |
+| `Oidc__AdminGroup`                   | Группа администраторов, например `ytdlp-ui-admins`                                         |
+| `ConnectionStrings__AppDatabase`     | Файловая SQLite; в контейнере `Data Source=/data/db/app.db`                                |
+| `Paths__DataProtectionKeysDirectory` | Постоянный каталог ключей; в контейнере `/data/keys`                                       |
+| `ReverseProxy__KnownProxies__0`      | Доверенный IP reverse proxy; дополнительные адреса задаются индексами                      |
+| `ReverseProxy__KnownNetworks__0`     | Доверенная CIDR-сеть вместо отдельных адресов при необходимости                            |
+| `ReverseProxy__AllowedHosts__0`      | Разрешенный внешний host из X-Forwarded-Host                                               |
+
+Обязательные OIDC-поля проверяются при запуске; отсутствующая группа или секрет не включают локальную авторизацию.
+Демонстрационные значения `appsettings.json` следует заменить. `Admin`/`Jwt`, локальный пароль, собственные JWT и
+refresh API больше не используются. Токены OIDC и client secret не передаются React и не сохраняются в браузерном
+хранилище.
+
+В production используйте HTTPS, обычно с завершением TLS на существующем reverse proxy. Обработка `X-Forwarded-For`,
+`X-Forwarded-Proto` и `X-Forwarded-Host` включается только при заданных доверенных IP/сетях; без них заголовки не
+изменяют адрес callback. Ограничьте `AllowedHosts` именем публичного приложения и укажите реальные адреса доверенной
+инфраструктуры. Discovery/JWKS/token/UserInfo Authentik должны быть доступны бэкенду.
+
+Сессия абсолютная, 12 часов от входа, без sliding и «Запомнить меня». Браузер получает HttpOnly cookie; в production она
+Secure и SameSite=Lax. Cookie общая для вкладок браузера; каждая вкладка проверяет вход при загрузке и возвращении на
+страницу. Изменение группы в Authentik отражается при новом SSO-входе; мгновенный внешний отзыв не заявляется. Выход
+отзывает только текущую сессию приложения, не завершает Authentik/другие приложения и не отменяет фоновые задания.
+
+`GET /api/auth/session` возвращает отдельный случайный `sessionId` для защиты UI от поздних ответов. Это идентификатор
+интерфейсной сессии, который не совпадает с ключом серверного ticket и не дает доступа через header/query/cookie. После
+выхода, нового входа или `401` закрытые данные очищаются; ответы прежней сессии не возвращают их и не закрывают новые
+формы.
+
 ## Сборка и запуск
 
-Для сборки всего приложения требуются .NET SDK **10.0.403**, Node.js **24.19.0** и npm в `PATH`. Для отдельной сборки
-API Node.js/npm не нужны. SDK строго зафиксирован в `global.json`; CI и Docker используют ту же версию.
-NuGet-зависимости управляются через CPM; `NuGet.Config` ограничивает источники публичным `nuget.org`, чтобы сборка не
-зависела от пользовательских feeds. Зависимости React фиксируются в `src/Ytdlp.Ui.Client/package-lock.json`.
-
-Из корня репозитория:
+Требуются .NET SDK **10.0.403**, Node.js **24.19.0** и npm в PATH. SDK строго зафиксирован в `global.json` и согласован
+с Docker; CI читает тот же файл. Источник NuGet ограничен `nuget.org` в `NuGet.Config`.
 
 ```powershell
 npm --prefix src/Ytdlp.Ui.Client ci --no-audit --no-fund
 npm --prefix src/Ytdlp.Ui.Client run build
 dotnet restore Ytdlp.Ui.slnx
 dotnet build Ytdlp.Ui.slnx -c Release --no-restore
-$databasePath = Join-Path (Get-Location) 'data/db/app.db'
-dotnet run --project src/Ytdlp.Ui -c Release --no-build -- --ConnectionStrings:AppDatabase "Data Source=$databasePath"
 ```
 
-Открыть `http://localhost:5080/`. Профиль запуска использует локальный HTTP без настройки сертификатов.
+По умолчанию .NET не запускает npm; сборка только API допустима без `dist`. Готовый React включается в `wwwroot`
+build/publish без копирования в исходники. Совместная сборка включается явно:
+`dotnet build Ytdlp.Ui.slnx -c Release -p:BuildFrontend=true`. Отдельный target —
+`dotnet build src/Ytdlp.Ui/Ytdlp.Ui.csproj -t:BuildFrontend`.
 
-По умолчанию `dotnet build` и `dotnet publish` не вызывают npm. React собирается отдельно: TypeScript проверяет типы,
-Vite создает `src/Ytdlp.Ui.Client/dist/`. MSBuild включает готовые файлы в `wwwroot` результата сборки и публикации; в
-каталог исходников бэкенда они не копируются. Сборка только API допускается без `dist`, но публикация требует готовый
-UI. После изменения React сначала пересоберите фронтенд, затем .NET.
-
-Совместная сборка включается явно:
+Пример локальных путей после задания реальных OIDC-параметров в окружении:
 
 ```powershell
-dotnet build Ytdlp.Ui.slnx -c Release -p:BuildFrontend=true
+$env:ConnectionStrings__AppDatabase = 'Data Source=' + (Join-Path (Get-Location) 'data/db/app.db')
+$env:Paths__DataProtectionKeysDirectory = Join-Path (Get-Location) 'data/keys'
+dotnet run --project src/Ytdlp.Ui -c Release --no-build
 ```
 
-В этом режиме MSBuild выполняет `npm ci`, если зависимости отсутствуют или изменился манифест/lock-файл, затем сборку
-React. Только фронтенд можно собрать через `dotnet build src/Ytdlp.Ui/Ytdlp.Ui.csproj -t:BuildFrontend`; это не
-компилирует бэкенд.
-
-Для разработки React с обновлением страницы можно запустить `npm --prefix src/Ytdlp.Ui.Client run dev`. Vite проксирует
-`/api` на локальный бэкенд `http://localhost:5080`. При работе через Vite бэкенд можно собрать без UI.
+Профиль разработки слушает `http://localhost:5080`; для локального OIDC настройте подходящий callback/proxy в своей
+среде. В production callback — HTTPS. Для React разработки `npm --prefix src/Ytdlp.Ui.Client run dev` использует Vite
+proxy к бэкенду на 5080; рекомендуемый SSO-сценарий — единый origin через Kestrel/reverse proxy.
 
 ## API
 
-| Метод и маршрут                   | Авторизация      | Запрос                   | Ответ                                                                                                                                                                    |
-|-----------------------------------|------------------|--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `GET /api/hello`                  | Не требуется     | Без тела и параметров    | `200`, `Content-Type: text/plain; charset=utf-8`, тело `Hello World`                                                                                                     |
-| `GET /api/library`                | Не требуется     | Без тела                 | `200`, полный массив `{ id, name, size, lastModified, contentUrl }`                                                                                                      |
-| `GET /api/library/{id}/content`   | Не требуется     | Без тела                 | `200`, поток демонстрационного файла с `Content-Disposition: attachment`; `404`, если отсутствует                                                                        |
-| `DELETE /api/library/{id}`        | Администратор    | Без тела                 | `204`, включая уже отсутствующий файл; `409 invalid_state` при незавершённой очистке связанного задания                                                                  |
-| `GET /api/auth/session`           | Не требуется     | Опциональный Bearer JWT  | `200`, `{ authenticated }`; `401` при переданном недействительном токене                                                                                                 |
-| `POST /api/auth/login`            | Не требуется     | `{ username, password }` | `200` после сохранения сессии в SQLite, `{ accessToken, tokenType: "Bearer", expiresAt, refreshToken }`; `401` при неверных данных; `500` при ошибке записи, без токенов |
-| `POST /api/auth/refresh`          | Без access token | `{ refreshToken }`       | `200`, новая пара в том же формате; `401` для неверного, истекшего, отозванного или уже использованного refresh; `500` при ошибке БД, без новой пары                     |
-| `POST /api/auth/logout`           | Администратор    | Без тела                 | `204`, отзыв текущей сессии                                                                                                                                              |
-| `GET /api/downloads`              | Администратор    | Без тела                 | `200`, массив заданий с состояниями, действиями и моковой историей                                                                                                       |
-| `GET /api/downloads/{id}`         | Администратор    | Без тела                 | `200`, задание; `404`, если отсутствует                                                                                                                                  |
-| `POST /api/downloads`             | Администратор    | `{ url }`                | `201` с `Location` для нового задания; `202` для повтора удалённого результата; `400 invalid_url`, `409 download_already_exists`                                         |
-| `POST /api/downloads/{id}/retry`  | Администратор    | Без тела                 | `202`, новая попытка с прежним ID задания; `404` либо `409 invalid_state`                                                                                                |
-| `POST /api/downloads/{id}/cancel` | Администратор    | Без тела                 | `202`, состояние Canceled; `404` либо `409 invalid_state`                                                                                                                |
+| Метод и маршрут                   | Доступ и запрос                                | Ответ                                                                                                                           |
+|-----------------------------------|------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `GET /api/auth/login?returnUrl=/` | Навигация браузера; returnUrl только локальный | OIDC redirect в Authentik; `400` для внешнего returnUrl                                                                         |
+| `/signin-oidc`                    | Callback стандартного OIDC middleware          | После проверки — возврат в библиотеку; безопасный `authError=access_denied` или `login_failed` при отказе, без новых полномочий |
+| `GET /api/auth/session`           | Публичный, cookie опциональна                  | `200 { authenticated, sessionId }`; без действующей административной сессии false/null                                          |
+| `GET /api/auth/csrf`              | Администратор, cookie                          | `200 { requestToken }` для X-CSRF-TOKEN                                                                                         |
+| `POST /api/auth/logout`           | Администратор, cookie + CSRF                   | `204` после сохраненного отзыва                                                                                                 |
+| `GET /api/library`                | Публичный                                      | Полный демонстрационный массив `{ id, name, size, lastModified, contentUrl }`                                                   |
+| `GET /api/library/{id}/content`   | Публичный                                      | Поток демонстрационного файла с attachment; `404` при отсутствии                                                                |
+| `DELETE /api/library/{id}`        | Администратор, cookie + CSRF                   | `204`, включая отсутствующий файл; `409 invalid_state` для незавершенной очистки связанного задания                             |
+| `GET /api/downloads`              | Администратор                                  | Массив демонстрационных заданий                                                                                                 |
+| `GET /api/downloads/{id}`         | Администратор                                  | Задание или `404`                                                                                                               |
+| `POST /api/downloads`             | Администратор, cookie + CSRF; `{ url }`        | `201` с Location; `202` для повтора удаленного результата; `400 invalid_url`, `409 download_already_exists`                     |
+| `POST /api/downloads/{id}/retry`  | Администратор, cookie + CSRF                   | `202`, новая попытка; `404` или `409 invalid_state`                                                                             |
+| `POST /api/downloads/{id}/cancel` | Администратор, cookie + CSRF                   | `202`; `404` или `409 invalid_state`                                                                                            |
+| `GET /api/hello`                  | Публичный                                      | `200 text/plain`, `Hello World`                                                                                                 |
 
-Административные запросы требуют `Authorization: Bearer <token>`; без входа возвращается `401`. JWT проверяется по
-подписи, HS256, issuer, audience, сроку и активности сессии в SQLite. Cookie и query-параметры не используются для
-авторизации; refresh передается только в JSON. Ответы авторизации имеют `Cache-Control: no-store`. Ошибки команд
-возвращаются как Problem Details с `code` для локализации в UI.
+Административный API возвращает `401` без сессии и `403` без прав, без HTML-перенаправления. CSRF проверяется до
+побочных действий; неверное подтверждение дает `400 antiforgery_failed`. Auth-ответы не кешируются. Неперехваченная
+ошибка — `500 application/problem+json` без текста исключения и секретов. Неизвестный `/api/*` возвращает `404` без
+React HTML; отсутствующий static asset — `404`, маршруты UI без расширения поддерживают SPA fallback.
 
-Моковое задание содержит
-`{ id, url, title, state, resumeState, progress, createdAt, errorCode, error, allowedActions, attempts }`. `progress`
-равен `null`, а индикатор активного этапа показывает неопределённый прогресс. История содержит
-`{ number, state, createdAt, error }`. Это предварительные DTO для работы над UI, без настоящей истории отдельных
-медиаэтапов.
+Состояние мокового задания:
+`{ id, url, title, state, resumeState, progress, createdAt, errorCode, error, allowedActions, attempts }`;
+`progress=null`, история `{ number, state, createdAt, error }`. Полная история этапов и работа worker еще не подключены
+к API.
 
-Неизвестные пути `/api/*` возвращают `404` без HTML интерфейса. `GET /` возвращает страницу React; пути UI без
-расширения поддерживают SPA fallback. Отсутствующий статический ресурс возвращает `404`.
+## Тесты
 
-Необработанные ошибки pipeline возвращаются как `500 application/problem+json` через стандартный Exception Handler.
-HTTP-ответ не содержит подробностей исключения или невыданных токенов; диагностика остается в серверном логе. Это
-поведение одинаково доступно в окружении Testing и при развертывании.
-
-## Тесты без внешнего окружения
+После сборки:
 
 ```powershell
 dotnet test tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj -c Release --no-build
 dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build
-```
-
-После установки npm-зависимостей запустить UI-тесты из корня:
-
-```powershell
 npm --prefix src/Ytdlp.Ui.Client test
 ```
 
-Unit-тесты домена находятся в `Ytdlp.Ui.Tests`, HTTP- и SQLite-проверки — в `Ytdlp.Ui.IntegrationTests`. Интеграционные
-тесты используют `WebApplicationFactory`/TestServer без отдельного процесса сервера и контейнеров.
-`Tools/CustomWebApplicationFactory` настраивает окружение Testing, тестовые учетные данные, отдельную файловую SQLite с
-миграциями, ephemeral Data Protection и переносимое логирование. `SetupBase` создает фабрику и клиент для каждого
-обычного HTTP-сценария и освобождает их в TearDown; это изолирует и БД, и singleton-моки. `SetupGlobal` владеет
-временным каталогом набора. Проверки перезапуска, отказа запуска и отдельных настроек сами владеют нужными хостами
-внутри сценария; низкоуровневые проверки ограничений SQLite используют отдельные контексты. Проверяются контракт API,
-выдача файлов, ограничения доступа, отзыв JWT, запрет токенов в cookie/query, дубликаты URL, история после удаления и
-запрет отмены очистки до и после повтора. Проверки страницы React и доступности собранного JavaScript также сохранены.
-NSubstitute включен в общие зависимости тестов для будущих заглушек внешних компонентов.
+Unit-тесты проверяют агрегат и переходы автомата без хоста и Docker. Интеграционные тесты используют настоящий
+TestServer и отдельную файловую SQLite с миграциями. `Tools/CustomWebApplicationFactory` настраивает Testing и временный
+key ring; `SetupBase` владеет фабрикой/клиентом одного сценария, `SetupGlobal` — временным каталогом набора.
+Startup/restart/options тесты владеют своими хостами; низкоуровневые ограничения SQLite проверяются отдельными
+контекстами.
 
-Агрегат и его автомат проверяются отдельными unit-тестами без запуска приложения. Проверки охватывают переходы и отказы,
-подтверждение публикации/очистки/удаления, точки ручного повтора, прерывание операций, идентификаторы попыток и
-публикаций, идемпотентную отмену, `allowedActions` и оба порядка событий при гонке отмены с успехом Uploading.
-Дополнительно проверяются последовательные переходы одного агрегата, его восстановление и неизменность ранее полученных
-снимков.
+Fake OIDC provider предоставляет discovery/JWKS, подписанный RSA ID token и UserInfo через backchannel настоящего
+OpenIdConnectHandler. Проверяются state/correlation/nonce, PKCE verifier, client/redirect, подпись/issuer/audience/срок,
+группы только в UserInfo и несовпадение sub. Также проверяются 12 часов без sliding, отзыв/restart, отказ БД, upgrade
+InitialPersistence без потери истории и CSRF всех команд. Тесты не обращаются к пользовательскому Authentik.
 
-SQLite-тесты используют отдельную временную файловую БД с настоящими миграциями и удаляют ее после каждой проверки.
-Проверяются повторное применение миграций, соответствие модели схеме, сохранение и повторное чтение всех сущностей,
-порядок очереди, уникальные индексы при одновременной записи, принадлежность артефактов и этапов заданию, запрет
-каскадного удаления истории, версия записи и откат конкурентного перехода вместе с историей. Отдельно проверяются
-транзакционное создание повтора и оба исхода гонки отмены с подтверждением Uploading. Проверки запуска хоста
-подтверждают создание БД в WAL до запросов, сохранение записи и истории миграций после перезапуска и отказ запуска при
-невозможности создать каталог БД. Эти тесты не требуют Docker.
+Vitest проверяет SSO-навигацию, отсутствие парольной формы и browser tokens, общий CSRF-запрос, публичную библиотеку,
+`401`/сетевые ошибки, EN/RU и поздний успешный create из прежней сессии, который не должен закрывать новую URL-форму.
+Реальная отправка файлов и Testcontainers MinIO будут добавлены следующим этапом; текущие интеграционные тесты Docker не
+требуют.
 
-Запустить только проверки доменного агрегата после Release-сборки:
-
-```powershell
-dotnet test tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj -c Release --no-build --filter FullyQualifiedName~Ytdlp.Ui.Tests.Domain.DownloadTests
-```
-
-Авторизация проверяется через API на файловой SQLite: сроки access/сессии, хранение только хеша refresh как BLOB32,
-неверные учетные данные и параметры JWT, ошибка вставки/ротации без токенов, single-use ротация с единственным
-конкурентным победителем, отзыв обоих токенов и гонка logout с refresh. Управляемое время в тестах сервиса задает
-`FakeTimeProvider` из тестового пакета `Microsoft.Extensions.TimeProvider.Testing`: проверяются дробные секунды,
-абсолютная граница сессии и точное время отзыва. Проверки рестарта подтверждают действующую сессию и refresh после
-перезапуска. На свежей БД с единственной миграцией проверяются сравнение бинарных хешей по содержимому, уникальный
-индекс и допустимость нескольких null.
-
-Только SQLite-проверки:
-
-```powershell
-dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build --filter TestCategory=SQLite
-```
-
-Vitest и Testing Library проверяют публичную библиотеку без запросов закрытых данных, восстановление истекшего access
-через refresh, вход/выход, валидацию URL, один повтор после `401`, общий refresh для параллельных запросов,
-окончательный `401` и сохранение пары при `500`. Проверяются поздние ответы после logout/нового login и независимость
-общего refresh от отмены отдельного запроса. Отдельно проверяются выбор языка браузера и ресурсы EN/RU.
-
-Контейнерных интеграционных тестов на этой стадии нет. При реализации MinIO они будут добавлены в интеграционный проект
-с Testcontainers и обязательным запуском в CI; локальные тесты без Docker останутся отдельным набором.
-
-## Публикация
+## Публикация и контейнер
 
 ```powershell
 dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-restore -o artifacts/publish
 dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-build -o artifacts/publish-no-build
 ```
 
-Обе команды используют предварительно собранный `src/Ytdlp.Ui.Client/dist/` и не запускают npm. Первая компилирует .NET,
-вторая использует предыдущую Release-сборку. Оба варианта включают `wwwroot/index.html` и собранные CSS/JS; исходники
-React и `node_modules` не публикуются. `--no-build` требует предварительного `dotnet build` с той же конфигурацией и
-актуальным `dist/`. При отсутствии готового UI публикация завершается ошибкой с подсказкой.
-
-Совместная компиляция и публикация также доступны:
-`dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release -p:BuildFrontend=true -o artifacts/publish`. С `--no-build`
-React не компилируется даже при указанном флаге.
-
-Запуск опубликованного приложения из его каталога:
+Publish требует готовый `dist/index.html`; `--no-build` не компилирует React даже с BuildFrontend=true. Результат
+содержит UI в wwwroot, без исходников клиента/node_modules. Совместный вариант —
+`dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release -p:BuildFrontend=true -o artifacts/publish`.
 
 ```powershell
-dotnet Ytdlp.Ui.dll --urls http://localhost:5080 --ConnectionStrings:AppDatabase "Data Source=./data/db/app.db"
+docker build -t ytdlp-ui:local .
+docker run --rm -p 5080:8080 -v ytdlp-data:/data --env-file .env ytdlp-ui:local
 ```
 
-## Конфигурация
+`.env` содержит реальные OIDC-параметры из таблицы выше; его нельзя коммитить с секретами. Volume `/data` сохраняет
+SQLite и `/data/keys`; каталог принадлежит непривилегированному пользователю образа. Для замены контейнера сначала
+останавливайте прежний экземпляр. Потеря key ring делает прежние cookie/tickets непригодными; восстановление требует
+нового входа. Текущий образ еще не содержит готовую медиаподсистему.
 
-Используются стандартные настройки ASP.NET Core: `Logging`, `AllowedHosts` и адрес прослушивания. Их можно
-переопределять переменными окружения, например `ASPNETCORE_URLS=http://+:8080` и `Logging__LogLevel__Default=Warning`.
+Вспомогательный `docker compose up --build` использует тот же volume и переменные OIDC из окружения. Подключение
+настоящего MinIO/FFmpeg/yt-dlp описывается по мере реализации; автоматический деплой в pipeline не входит. CI отдельно
+строит React/.NET, запускает unit и интеграционные тесты и проверяет оба publish; job docker строит AMD64/ARM64 и
+публикует GHCR только из основной ветки. CI не запускает production-приложение и smoke-тесты образов.
 
-Для демонстрационного входа: **`admin` / `demo-password`**. Эти значения заданы на бэкенде в `Admin:Username` и
-`Admin:Password` и переопределяются через `Admin__Username`, `Admin__Password`. JWT настраивается через `Jwt:Issuer`,
-`Jwt:Audience`, `Jwt:SigningKey` (переменные `Jwt__Issuer`, `Jwt__Audience`, `Jwt__SigningKey`). `SigningKey` задается в
-стандартном Base64 и должен декодироваться минимум в 32 байта (256 бит) для HS256. Пример ключа предназначен для
-демонстрационного режима; его Base64 сохраняет прежние байты ключа. Срок access token — 5 минут, абсолютный срок
-сессии — 12 часов от входа. Рестарт с прежней БД и ключом не требует нового входа. Выход отзывает только текущую сессию
-в SQLite.
+Новая миграция OidcSessions применяется автоматически при запуске, отзывает прежние локальные сессии и сохраняет
+задания/историю. Перед развертыванием делайте резервную копию SQLite. Для отката нужен прежний образ с соответствующей
+резервной копией БД; старые JWT/refresh не переносятся в OIDC-сессии.
 
-Клиент хранит пару токенов и срок access token в `sessionStorage`. Перед административным запросом обновляет истекший
-access; при `401` обновляет пару и повторяет запрос один раз. Параллельные запросы используют один refresh;
-кратковременные сетевые ошибки и `500` сохраняют вход. После перезагрузки UI при необходимости обновляет access и
-проверяет сессию перед загрузкой закрытых данных. Окончательный `401` или выход очищает токены и административные
-данные. Пароль не сохраняется. Поздние ответы прежней сессии не восстанавливают вход после logout и не перезаписывают
-новый login.
-
-При запуске требуется доступ к постоянному файлу SQLite и его каталогу. В `appsettings.json` задан
-`ConnectionStrings:AppDatabase` со значением `Data Source=/data/db/app.db`, которое читается через
-`IConfiguration.GetConnectionString`. Переопределение — `ConnectionStrings__AppDatabase`. Пустая строка подключения и
-режим SQLite Memory отклоняются. Относительный путь приводится к полному от текущего рабочего каталога процесса; тесты
-используют этот вариант. Для локального запуска выше передается отдельный путь в репозитории, а опубликованное
-приложение использует `./data/db/app.db` относительно каталога запуска. Промежуточные файлы и S3 пока не подключены.
-Основной сценарий MVP останется подключением к существующему MinIO.
-
-В контейнере сохраняйте `/data` в volume: в нем находятся БД и сопутствующие SQLite-файлы `-wal`/`-shm`. Dockerfile
-создает `/data/db` с владельцем `$APP_UID`; Compose подключает именованный volume `app-data`. При bind mount каталог
-хоста должен быть доступен на запись этому UID. Обычные перезапуски и `docker compose down` сохраняют именованный
-volume; `docker compose down -v` удаляет его вместе с БД.
-
-### Миграции SQLite
-
-До production схема объединена в единственную миграцию `InitialPersistence`, включая nullable BLOB-хеш refresh и его
-уникальный индекс. Локальную БД, созданную прежними вариантами миграций, разработчик должен пересоздать вручную.
-Приложение не удаляет ее автоматически и не преобразует прежнюю схему.
-
-Локальный инструмент `dotnet-ef` закреплен в `.config/dotnet-tools.json`; его версия согласована с пакетами EF Core в
-CPM. После Release-сборки можно создать отдельную БД для проверки схемы, не запуская API:
-
-```powershell
-dotnet tool restore
-$databasePath = Join-Path (Get-Location) 'artifacts/sqlite-step2/app.db'
-New-Item -ItemType Directory -Force -Path (Split-Path $databasePath) | Out-Null
-dotnet ef database update --project src/Ytdlp.Ui --context AppDbContext --configuration Release --no-build -- --ConnectionStrings:AppDatabase "Data Source=$databasePath"
-```
-
-`dotnet-ef` получает `AppDbContext` из DI хоста приложения. Источники конфигурации и их приоритет совпадают с обычным
-запуском ASP.NET Core. Инструмент создает хост для получения сервисов, но не запускает HTTP-сервер. Относительный путь
-считается от рабочего каталога процесса; пример передает абсолютный путь от корня репозитория и заранее создает каталог
-БД. Файлы БД и `artifacts/` не коммитятся. Применение миграции через CLI проверено на отдельной БД. Программная
-инициализация `AppDbContext.InitializeAsync` с настоящими миграциями проверена тестами на временных БД.
-
-## Docker и CI
-
-Dockerfile содержит независимые этапы сборки React в Node.js и сборки .NET, затем ASP.NET runtime. Готовый `dist/`
-передается в этап .NET перед публикацией; Node.js/npm для сборки UI в этом этапе не нужны. Статический UI собирается на
-платформе сборщика и используется для обеих целевых архитектур. Финальный контейнер запускается непривилегированным
-пользователем, имеет доступ на запись в `/data` и слушает порт 8080. Медиазависимости и вспомогательный MinIO в Compose
-будут добавлены при реализации соответствующих компонентов.
-
-Команды для окружения с Docker:
-
-```powershell
-docker build -t ytdlp-ui:dev .
-docker run --rm -p 5080:8080 -v ytdlp-ui-data:/data ytdlp-ui:dev
-docker compose up --build
-docker buildx build --platform linux/amd64,linux/arm64 --output type=oci,dest=artifacts/ytdlp-ui.tar .
-```
-
-CI запускается на push и pull request в `master`. Общие шаги оформлены
-по [workflow ResultService](https://github.com/Texnokaktus-ProgOlymp/ResultService/blob/master/.github/workflows/dotnet.yml):
-Setup .NET, Restore dependencies, Build, Test, Version, QEMU, Buildx, вход в реестр, metadata и Build and push Docker
-image. Дополнительно настроены Node.js, тесты React и проверка публикации.
-
-Job `build` отдельно восстанавливает зависимости и собирает React, затем собирает .NET, выполняет тесты без внешних
-сервисов и проверяет оба варианта публикации. Содержимое `wwwroot` сравнивается с готовым `dist`. Job `docker` после
-него собирает `linux/amd64,linux/arm64` через Buildx/QEMU. Приложение и готовые контейнеры в CI не запускаются;
-smoke-тестов образов нет. При push в `master` образ публикуется в `ghcr.io/<repository-owner>/ytdlp-ui`; для PR вход в
-GHCR и публикация отключены. Проверка запуска на целевых архитектурах выполняется отдельно.
-
-Тег имеет вид `YYYY.M.D.<github.run_number>`: дата берется из даты коммита в `Europe/Moscow`. Имя образа приводится к
-нижнему регистру; теги и OCI labels формирует Docker metadata action. Автоматический деплой не настроен.
-
-**Проверено локально:** раздельная сборка React и .NET Release без вызова npm из .NET, сборка API без готового UI,
-совместная сборка по флагу `BuildFrontend=true` и отдельный target `BuildFrontend`, отказ публикации без UI; NUnit и
-Vitest; обычная публикация и публикация с `--no-build`, совпадение файлов UI с `dist`. Ранее проверены вход,
-восстановление сессии, создание задания и фокус диалогов в браузере; мобильная ширина 390 px без горизонтального
-скролла. Workflow проверен через actionlint, Compose — через `docker compose config --quiet`.
-
-При адаптации структуры тестов 2026-11-03 локально проверены сборка и запуск образа на `linux/amd64`: React/assets,
-публичный каталог, защищенный API, непривилегированный пользователь, файловая SQLite в volume и сохранение сессии при
-замене контейнера. Docker Desktop доступен. Подробные результаты независимого ревью —
+Локально на этапе OIDC проверены сборка и запуск `linux/amd64`: UI/assets, публичная библиотека, закрытие
+административных API и прежнего парольного входа, SQLite/key ring в volume и сохранение ключей после замены контейнера.
+Закрытые ключи имеют mode 600 и принадлежат UID 1654. Результаты независимого ревью и проверок —
 в [журнале](openspec/review-log.md).
 
-**Не проверено локально:** сборка и запуск ARM64 и выполнение workflow на GitHub Actions. Полные runtime-зависимости
-yt-dlp/FFmpeg и реальный MinIO относятся к следующим этапам MVP. Запуск приложения в CI отключён по указанию
-пользователя.
-
-Для подключения инициализации SQLite проверены Release-сборка, NUnit-тесты первого и повторного запуска через TestServer
-и сохранение данных, отказ запуска при ошибке БД, публикация с фронтендом, применение миграции через `dotnet-ef` и
-конфигурация Compose. Новые команды запуска контейнера приведены для окружения с Docker; локально они не выполнялись.
-
-Для SQLite-авторизации и refresh проверены Release-сборка, NUnit/API-тесты на свежих файловых БД с единственной
-начальной миграцией, TypeScript (`tsc --noEmit`), `vite build`, Vitest и `dotnet publish --no-build` с совпадением
-опубликованного UI с `dist`. В текущей среде npm отсутствует в PATH, поэтому локальные frontend CLI запущены с bundled
-Node; для Vite/Vitest разрешен запуск вне sandbox из-за Windows spawn EPERM. Новые browser- и Docker-проверки в этом
-этапе не выполнялись.
+Реальный вход в пользовательский Authentik и запуск ARM64 требуют отдельного подходящего окружения. Пройденные
+изолированные OIDC-тесты не являются проверкой настройки конкретного сервера.

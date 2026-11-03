@@ -1,3 +1,4 @@
+using Ytdlp.Ui.IntegrationTests.Tools;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -45,23 +46,21 @@ public class DemoApiTests : SetupBase
         Assert.That(before.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         using var logout = await Client.PostAsync("/api/auth/logout", null);
         Assert.That(logout.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
-        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        Client.DefaultRequestHeaders.Add("Cookie", token);
         using var after = await Client.GetAsync("/api/downloads");
         Assert.That(after.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
     [Test]
-    public async Task TokenInQueryOrCookieDoesNotAuthenticate()
+    public async Task UntrustedTokenInQueryOrCookieDoesNotAuthenticate()
     {
-        var token = await Login();
-        Client.DefaultRequestHeaders.Authorization = null;
-        Client.DefaultRequestHeaders.Add("Cookie", $"access_token={token}");
-        using var response = await Client.GetAsync($"/api/downloads?access_token={token}");
+        Client.DefaultRequestHeaders.Add("Cookie", "access_token=old-token");
+        using var response = await Client.GetAsync("/api/downloads?access_token=old-token");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
     [Test]
-    public async Task IncorrectCredentialsAndInvalidTokensAreRejected()
+    public async Task LocalPasswordAndInvalidBearerAreRejected()
     {
         using var login = await Client.PostAsJsonAsync(
                               "/api/auth/login",
@@ -72,10 +71,10 @@ public class DemoApiTests : SetupBase
                               }
                           );
 
-        Assert.That(login.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        Assert.That(login.IsSuccessStatusCode, Is.False);
         Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "invalid");
-        using var session = await Client.GetAsync("/api/auth/session");
-        Assert.That(session.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+        using var access = await Client.GetAsync("/api/downloads");
+        Assert.That(access.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
     }
 
     [Test]
@@ -175,20 +174,5 @@ public class DemoApiTests : SetupBase
         Assert.That(canceled.Attempts[1].State, Is.EqualTo("Canceled"));
     }
 
-    private async Task<string> Login()
-    {
-        using var response = await Client.PostAsJsonAsync(
-                                 "/api/auth/login",
-                                 new
-                                 {
-                                     username = "admin",
-                                     password = "demo-password"
-                                 }
-                             );
-
-        var token = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
-        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        return token;
-    }
+    private Task<string> Login() => OidcBrowser.SignInAsync(Factory, Client);
 }
