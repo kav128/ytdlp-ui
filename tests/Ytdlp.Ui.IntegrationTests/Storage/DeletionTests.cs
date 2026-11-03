@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Configuration;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
 using Ytdlp.Ui.Domain;
 using Ytdlp.Ui.Domain.Primitives;
 using Ytdlp.Ui.Domain.ValueObjects;
@@ -21,13 +24,26 @@ namespace Ytdlp.Ui.IntegrationTests.Storage;
 public sealed class DeletionTests : SetupBase
 {
     private FaultingS3Client _faults = null!;
+    private string _key = "";
 
-    protected override void ConfigureApplication(IWebHostBuilder builder) => builder.ConfigureTestServices(services =>
-        {
-            services.RemoveAll<IAmazonS3>();
-            services.AddSingleton<IAmazonS3>(_ => _faults = new FaultingS3Client(SetupGlobal.Endpoint));
-        }
-    );
+    protected override void ConfigureApplication(IWebHostBuilder builder)
+    {
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
+                                              new Dictionary<string, string?>
+                                              {
+                                                  ["Worker:Enabled"] = "true",
+                                                  ["Worker:PollIntervalMilliseconds"] = "20"
+                                              }
+                                          )
+        );
+
+        builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAmazonS3>();
+                services.AddSingleton<IAmazonS3>(_ => _faults = new FaultingS3Client(SetupGlobal.Endpoint));
+            }
+        );
+    }
 
     [Test]
     public async Task OwnPublicationIsDeletedThroughAggregateAndKeepsHistory()
@@ -35,7 +51,8 @@ public sealed class DeletionTests : SetupBase
         var record = await SeedPublicationAsync();
         await OidcBrowser.SignInAsync(Factory, Client);
         using var response = await DeleteAsync();
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        await WaitForStateAsync(record.Id, DownloadState.Deleted);
         using var scope = Factory.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var saved = await database.Downloads.SingleAsync();
@@ -65,7 +82,7 @@ public sealed class DeletionTests : SetupBase
         await OidcBrowser.SignInAsync(Factory, Client);
         using var response = await DeleteAsync();
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
-        Assert.That((await S3.GetObjectMetadataAsync(Bucket, "own/result.bin")).ContentLength, Is.EqualTo(3));
+        Assert.That((await S3.GetObjectMetadataAsync(Bucket, _key)).ContentLength, Is.EqualTo(3));
         using var scope = Factory.Services.CreateScope();
 
         Assert.That(
@@ -80,16 +97,17 @@ public sealed class DeletionTests : SetupBase
     [TestCase("delete_error")]
     public async Task StorageFailureNeverConfirmsADeletedPublication(string fault)
     {
-        await SeedPublicationAsync();
+        var seeded = await SeedPublicationAsync();
         await OidcBrowser.SignInAsync(Factory, Client);
         _faults.Fault = fault;
         using var response = await DeleteAsync();
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        await WaitForStateAsync(seeded.Id, DownloadState.Failed);
         using var scope = Factory.Services.CreateScope();
         var record = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Downloads.SingleAsync();
         Assert.That(record.State, Is.Not.EqualTo(DownloadState.Deleted));
-        Assert.That(record.PublicationState, Is.EqualTo(PublicationState.Available));
-        Assert.That((await S3.GetObjectMetadataAsync(Bucket, "own/result.bin")).ContentLength, Is.EqualTo(3));
+        Assert.That(record.ResumeState, Is.EqualTo(DownloadState.Deleting));
+        Assert.That((await S3.GetObjectMetadataAsync(Bucket, _key)).ContentLength, Is.EqualTo(3));
     }
 
     [Test]
@@ -179,25 +197,28 @@ public sealed class DeletionTests : SetupBase
     }
 
     [Test]
-    public async Task ChangedPublicationMetadataIsRejectedBeforeCreatingAttempt()
+    public async Task ChangedPublicationMetadataFailsTheQueuedAttemptWithoutDeletingForeignObject()
     {
-        await SeedPublicationAsync();
-        await PutAsync("own/result.bin", [9], Guid.NewGuid().ToString("D"));
+        var seeded = await SeedPublicationAsync();
+        await PutAsync(_key, [9], Guid.NewGuid().ToString("D"));
         await OidcBrowser.SignInAsync(Factory, Client);
         using var response = await DeleteAsync();
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        var failed = await WaitForStateAsync(seeded.Id, DownloadState.Failed);
+        Assert.That(failed.ErrorCode, Is.EqualTo("publication_changed"));
+        Assert.That((await S3.GetObjectMetadataAsync(Bucket, _key)).ContentLength, Is.EqualTo(1));
         using var scope = Factory.Services.CreateScope();
 
         Assert.That(
             await scope.ServiceProvider.GetRequiredService<AppDbContext>().Attempts.CountAsync(),
-            Is.EqualTo(1)
+            Is.EqualTo(2)
         );
     }
 
     [Test]
     public async Task FailureSavingDeletionLeavesDurableIntentForReconciliation()
     {
-        await SeedPublicationAsync();
+        var seeded = await SeedPublicationAsync();
         await OidcBrowser.SignInAsync(Factory, Client);
 
         using (var scope = Factory.Services.CreateScope())
@@ -209,11 +230,12 @@ public sealed class DeletionTests : SetupBase
             );
 
         using var response = await DeleteAsync();
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError));
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        await WaitForStateAsync(seeded.Id, DownloadState.Failed);
         using var check = Factory.Services.CreateScope();
         var saved = await check.ServiceProvider.GetRequiredService<AppDbContext>().Downloads.SingleAsync();
-        Assert.That(saved.State, Is.EqualTo(DownloadState.Deleting));
-        Assert.That(saved.Intent, Is.EqualTo(DownloadIntent.ExecuteStage));
+        Assert.That(saved.State, Is.EqualTo(DownloadState.Failed));
+        Assert.That(saved.ResumeState, Is.EqualTo(DownloadState.Deleting));
 
         Assert.That(
             (await S3.ListObjectsV2Async(new ListObjectsV2Request { BucketName = Bucket })).S3Objects,
@@ -221,8 +243,31 @@ public sealed class DeletionTests : SetupBase
         );
     }
 
+    [Test]
+    public async Task FailureSavingDeleteIntentDoesNotStartStorageIoOrLeaveAnAttempt()
+    {
+        await SeedPublicationAsync();
+        await OidcBrowser.SignInAsync(Factory, Client);
+
+        using (var scope = Factory.Services.CreateScope())
+            await DatabaseFailures.InstallAsync(
+                scope.ServiceProvider.GetRequiredService<AppDbContext>(),
+                "Downloads",
+                "UPDATE"
+            );
+
+        using var response = await DeleteAsync();
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError));
+        Assert.That(_faults.DeleteCalls, Is.Zero);
+        using var check = Factory.Services.CreateScope();
+        var database = check.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.That((await database.Downloads.SingleAsync()).State, Is.EqualTo(DownloadState.Completed));
+        Assert.That(await database.Attempts.CountAsync(), Is.EqualTo(1));
+        Assert.That((await S3.GetObjectMetadataAsync(Bucket, _key)).ContentLength, Is.EqualTo(3));
+    }
+
     private Task<HttpResponseMessage> DeleteAsync() => Client.DeleteAsync(
-        $"/api/library/{LibraryFile.Create("own/result.bin", 3, DateTimeOffset.UtcNow).Id}"
+        $"/api/library/{LibraryFile.Create(_key, 3, DateTimeOffset.UtcNow).Id}"
     );
 
     private async Task<DownloadRecord> SeedPublicationAsync(bool cleanup = false)
@@ -251,6 +296,19 @@ public sealed class DeletionTests : SetupBase
         );
 
         record.Intent = DownloadIntent.None;
+        _key = $"downloads/{record.Id:D}/{record.PublicationId:D}/result.bin";
+
+        var hash = Convert.ToHexString(
+                               SHA256.HashData(
+                                   new byte[]
+                                   {
+                                       1,
+                                       2,
+                                       3
+                                   }
+                               )
+                           )
+                          .ToLowerInvariant();
 
         var artifact = new DownloadArtifactRecord
         {
@@ -286,17 +344,55 @@ public sealed class DeletionTests : SetupBase
                 DownloadId = record.Id,
                 ArtifactId = artifact.Id,
                 PublicationId = record.PublicationId,
-                ObjectKey = "own/result.bin",
+                ObjectKey = _key,
                 Status = TransferStatus.Published,
                 ExpectedSize = 3,
+                Sha256 = hash,
                 CreatedAt = now,
                 UpdatedAt = now
             }
         );
 
         await database.SaveChangesAsync();
-        await PutAsync("own/result.bin", [1, 2, 3], record.PublicationId.ToString("D"));
+
+        var request = new PutObjectRequest
+        {
+            BucketName = Bucket,
+            Key = _key,
+            InputStream = new MemoryStream(
+                new byte[]
+                {
+                    1,
+                    2,
+                    3
+                }
+            ),
+            AutoCloseStream = true
+        };
+
+        request.Metadata.Add("publication-id", record.PublicationId.ToString("D"));
+        request.Metadata.Add("download-id", record.Id.ToString("D"));
+        request.Metadata.Add("sha256", hash);
+        await S3.PutObjectAsync(request);
 
         return record;
+    }
+
+    private async Task<DownloadRecord> WaitForStateAsync(Guid id, DownloadState state)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        while (true)
+        {
+            using var scope = Factory.Services.CreateScope();
+
+            var record = await scope.ServiceProvider.GetRequiredService<AppDbContext>()
+                                    .Downloads.AsNoTracking()
+                                    .SingleAsync(item => item.Id == id, timeout.Token);
+
+            if (record.State == state) return record;
+
+            await Task.Delay(25, timeout.Token);
+        }
     }
 }

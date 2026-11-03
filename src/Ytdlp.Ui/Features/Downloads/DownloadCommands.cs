@@ -13,6 +13,7 @@ public sealed class DownloadCommands(
     AppDbContext database,
     DownloadQueries queries,
     ILibraryStorage storage,
+    DownloadRetryPlanner retryPlanner,
     TimeProvider clock
 )
 {
@@ -199,7 +200,12 @@ public sealed class DownloadCommands(
                                  ? Guid.NewGuid()
                                  : (Guid?)null;
 
-        var retry = before.Apply(new Retry(Guid.NewGuid(), NewPublicationId: newPublication));
+        var preparation = newPublication is not null
+                              ? new RetryPreparation(DownloadState.Downloading)
+                              : await retryPlanner.PrepareAsync(record, cancellationToken);
+
+        var previousAttempt = record.CurrentAttemptId;
+        var retry = before.Apply(new Retry(Guid.NewGuid(), preparation.State, newPublication));
 
         if (!retry.IsAccepted) return InvalidState(record.Id);
 
@@ -214,6 +220,35 @@ public sealed class DownloadCommands(
 
         var number = await NextAttemptNumberAsync(record.Id, cancellationToken);
         AddAttempt(record, number, reason, record.ResumeState!.Value, now);
+        var newAttempt = database.Attempts.Local.Single(item => item.Id == record.CurrentAttemptId);
+        newAttempt.ErrorDetails = preparation.Explanation;
+
+        if (newPublication is null)
+        {
+            var reused = await database.Stages.Where(item => item.AttemptId == previousAttempt
+                                                          && item.Status == StageStatus.Succeeded
+                                        )
+                                       .ToArrayAsync(cancellationToken);
+
+            var initial = DownloadStages.FromState(record.ResumeState.Value);
+
+            foreach (var stage in reused.Where(item => item.Stage < initial))
+                database.Stages.Add(
+                    new StageExecutionRecord
+                    {
+                        Id = Guid.NewGuid(),
+                        DownloadId = record.Id,
+                        AttemptId = record.CurrentAttemptId,
+                        Stage = stage.Stage,
+                        Status = StageStatus.Succeeded,
+                        StartedAt = now,
+                        FinishedAt = now,
+                        Progress = 100,
+                        ArtifactId = stage.ArtifactId,
+                        ReusedFromStageId = stage.Id
+                    }
+                );
+        }
 
         try
         {

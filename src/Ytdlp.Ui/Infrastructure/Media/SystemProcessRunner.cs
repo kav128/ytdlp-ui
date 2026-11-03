@@ -28,6 +28,9 @@ public sealed class SystemProcessRunner : IProcessRunner
 
         if (!process.Start()) throw new InvalidOperationException("Media process could not be started.");
 
+        using var drain = new CancellationTokenSource();
+        Exception? stopFailure = null;
+
         void Kill()
         {
             try
@@ -36,6 +39,7 @@ public sealed class SystemProcessRunner : IProcessRunner
             }
             catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
             {
+                Interlocked.CompareExchange(ref stopFailure, error, null);
             }
         }
 
@@ -48,7 +52,7 @@ public sealed class SystemProcessRunner : IProcessRunner
         {
             try
             {
-                return await PumpAsync(pipe, limit, tail, line, cancellationToken);
+                return await PumpAsync(pipe, limit, tail, line, drain.Token);
             }
             catch
             {
@@ -69,20 +73,35 @@ public sealed class SystemProcessRunner : IProcessRunner
 
             return new(process.ExitCode, stdout.Text, stderr.Text, stdout.Truncated);
         }
-        catch
+        catch (Exception original)
         {
             Kill();
-            process.StandardOutput.Dispose();
-            process.StandardError.Dispose();
             using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
             try
             {
                 await process.WaitForExitAsync(shutdown.Token);
-                await Task.WhenAll(output, errors).WaitAsync(shutdown.Token);
+
+                try
+                {
+                    await Task.WhenAll(output, errors).WaitAsync(shutdown.Token);
+                }
+                catch (Exception) when (output.IsCompleted && errors.IsCompleted)
+                {
+                }
+
+                if (stopFailure is not null) throw new ProcessStopUnconfirmedException(stopFailure);
             }
-            catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException)
+            catch (Exception error)
             {
+                drain.Cancel();
+                process.StandardOutput.Dispose();
+                process.StandardError.Dispose();
+
+                _ = Task.WhenAll(output, errors)
+                        .ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+
+                throw error is ProcessStopUnconfirmedException ? error : new ProcessStopUnconfirmedException(original);
             }
 
             throw;

@@ -515,13 +515,85 @@ Root проверил yt-dlp 2026.10.26/EJS 0.8.0, FFmpeg 6.1.1 и Node 24.19.0 
 
 Независимое ревью этапа 5 и результаты приняты руководителем: R9/R10 `fixed`, открытых code findings к принятому объему нет. Исполняющий worker и обработка/публикация подтверждены контролируемыми pipeline проверками и отдельными настоящими Linux MP4/DASH/MKV сценариями. Руководителю переданы доказательства для заключительного Reformat документов и отдельного коммита; production runtime и полная надежность не объявляются завершенными.
 
+## Этап 6. Повторы, восстановление, отмена и удаление
+
+Статус: этап 5 закоммичен как `4683631`; независимая приемка полной надежности этапа 6 завершена. R11 `fixed`; следующий идентификатор замечания — `R12`. Финальные проверки выполнены после STOP и подтвержденного Rider Reformat.
+
+### Критерии приемки
+
+- Recovery выполняется после PostgreSQL migrations и до запуска queue/worker. Прерванные Downloading/Preparing/Uploading/CleaningUp/Deleting/Canceling становятся Failed с прежними attempt/history, FailedState/ResumeState и файлами для ручного повтора; обычные ожидающие Queued остаются в очереди. Восстановление не запускает прерванную обработку автоматически.
+- Retry проверяет физическое наличие, size и SHA-256 пригодных артефактов. Подтвержденные успешные этапы не повторяются; история новой попытки объясняет reuse и возврат к самому раннему необходимому этапу при missing/corrupt input. FailedState прежней ошибки и прежняя история сохраняются. Cleanup/Delete/Cancel не откатываются к скачиванию при частичной очистке или отсутствующих файлах.
+- Неопределенный Upload сначала согласуется с уже сохраненными key/publication/download/size/SHA и S3. Подтвержденный готовый объект позволяет продолжить cleanup без повторной отправки, в том числе если локальный prepared file уже утрачен. 403, timeout, сеть, отсутствие bucket и несовпадение metadata не превращаются в подтвержденное отсутствие или разрешение перезаписать объект.
+- Намерение и идентичность внешнего действия сохраняются до I/O. Fault-сценарии до/после внешнего успеха и до/после записи БД не создают повторную публикацию, ложный Deleted/Completed или потерю подтвержденной истории. Известный MPU и неизвестный исход Initiate/Complete согласуются только в собственной операции; чужие объекты/parts не очищаются.
+- Обе очередности Uploading→CleaningUp против cancel проверяются на PostgreSQL через настоящий pipeline. Победившая cleanup дает cancel409; победивший Canceling не разрешает поздний Upload success и очищает только свою незавершенную публикацию. Cancel запрещен в CleaningUp и Failed/Queued ResumeCleaningUp и отсутствует в allowedActions.
+- Canceled выставляется лишь после подтвержденного прекращения I/O и очистки собственных ресурсов. Ошибка остановки/очистки сохраняет Failed/ResumeCanceling; повтор отмены не создает новую работу. После Canceled/Deleted новая попытка получает новый publication/workspace, сброшенный MediaPlanJson и свежие artifact IDs; запоздалый старый результат/cleanup не касается нового поколения.
+- Неподтвержденная остановка процесса дает отдельный typed failure: файлы не очищаются, Canceled/Completed не симулируются, следующий claim не начинается. Согласован простой StopApplication/stop-claim barrier без process registry; persist failure также не должен снять барьер. User cancel сохраняет ResumeCanceling, host shutdown — Interrupted исходного этапа без synthetic RequestCancel. Безопасный restart/recreate контейнера с завершением всей PID namespace явно отделен от перезапуска одного host в прежней namespace.
+- Собственное удаление проходит через общую последовательную очередь и сохраненные Deleting intent/history с API202; внешнее удаление без job остается синхронным. Initial DELETE, retry deletion и worker не создают вторую обработку. Ответ202 не называется подтвержденным удалением; клиент показывает pending, пока S3/DB не подтвердят завершение. CleaningUp и DB publication/state guards дают409 до enqueue. Наблюдение S3 metadata/availability выполняет worker после202: ошибка дает Failed/ResumeDeleting с publication_changed/storage_unavailable и сохранным объектом; это не прежний immediate HTTP409/503.
+- Анонимные GET библиотеки/content не создают попытку и не меняют очередь. Все команды/retry/cancel/delete требуют прежние cookie/роль/CSRF, ошибки остаются JSON без redirect. Отказ БД/хранилища не объявляет успех, исходный URL/ID/история не теряются при повторе.
+- Проверки используют настоящую PostgreSQL и MinIO, управляемые внешние инструменты и fault gates; отдельные настоящие процессы подтверждают нормальный kill/drain. Test owners освобождают контейнеры/БД/файлы при ошибке; чужие поколения, buckets и параллельная работа не затрагиваются. Предыдущие runtime/selector/codec сценарии остаются регрессиями, а полный UI и обе production архитектуры завершаются этапами 7–8.
+
+### Проверки и замечания
+
+Прочитаны полные lifecycle/submission/public-library требования с PostgreSQL/auth delta. Руководитель отдельно согласовал typed stop failure/barrier и различие user cancel/host interruption; вопрос из этапа 5 перешел в принимаемое поведение этапа 6. На момент первичного чтения срез еще менялся, замечаний с воспроизводимым доказательством не было; .NET параллельно разработчику не запускался.
+
+Арбитраж own DELETE202: DB/state/publication guards остаются синхронными; S3 ошибки и чужие metadata фиксируются worker после принятия команды, без удаления чужого объекта/потери истории. External non-job DELETE остается синхронным. Руководитель подтвердил, что main specs не требуют immediate HTTP-ошибки S3 именно для queued own delete; конкретные API/design/readme/tests должны явно описывать новую последовательность. Это согласование одной обработки, не новая продуктовая функция и не ослабление сохранности/idempotency.
+
+В раннем стабильном срезе прочитаны StartupRecovery/Program, DownloadQueue, LibraryDeletionService, DownloadWorker/SystemProcessRunner, DownloadRetryPlanner/ArtifactIntegrity и связанный MediaPipeline. По исходникам recovery расположен до app.RunAsync; own DELETE сохраняет pending Deleting без сетевого удаления в HTTP; retry сначала наблюдает S3, затем проверяет локальный size/SHA-256. Barrier выставляет stop-claim до попытки сохранить Failed и вызывает StopApplication в finally. На этом шаге были зафиксированы результаты чтения, а не выполненных сценариев. Разработчик готовил fault gates на успешный Download/Prepare до ready-save, Complete до CleaningUp-save с утраченным local file, cleanup/delete до final-save, обе очередности cancel/upload и отказ БД при неподтвержденной остановке; финальные прогоны приведены ниже.
+
+### Отдельная настоящая Linux-проверка руководителя
+
+Root сообщил успешный reliability probe на overlay `953179624c58edbf4a6fe717dab3ccf8b55a99ec45e0d9b38f8d8912709b9820`: три прежних настоящих media happy path, отмена активного slow download до Canceled и запуск следующего задания, принудительный SIGKILL приложения во время Downloading и recreate с теми же PostgreSQL/keys/work. После recreate прерванное задание осталось Failed/interrupted для ручного повтора, очередь продолжила следующее; ручной retry сохранил download ID и дал вторую попытку. Own DELETE вернул202, завершился Deleted/content404; повтор Deleted получил новую публикацию и третью попытку, старый content остался404. Собственный work пуст, тестовая среда очищена. Использованы настоящий TicketStore и сохраненная cookie; реальный пользовательский Authentik не проверялся. Это отдельное доказательство руководителя до финального gate; оно не заменяет независимые fault/race/stop проверки ревьюера.
+
+### R11 — нестабильная синхронизация сценария смены cookie-сессии
+
+- **Severity:** P2; статус `fixed`.
+-
+**Доказательство:** после Reformat43 выполнены последовательные frontend build и `npm --prefix src/Ytdlp.Ui.Client test`. Build успешен, Vitest30/31. `App.test.tsx:129`, сценарий `ignores an old upload completion after another cookie session opens a new upload form`, падает на первом `getByLabelText(messages.chooseFile)`: кнопка Upload уже появилась, но dialog отсутствует, private list еще Loading. Тест открывает форму во время первоначальной смены sessionId/reset effect; его ожидание кнопки недостаточно подтверждает завершение перехода.
+- **Требуемое
+  поведение:** детерминированно дождаться подтвержденной сессии/согласованного UI перед открытием форм A и B, затем сохранить проверку, что поздний upload A не закрывает и не меняет форму B. Не устранять проверку, не использовать sleep. По этому падению не заявляется доказанный production defect.
+- **Ответ
+  разработчика:** ожидание initial Private video перед Upload A, после401 — отсутствия private data и header login, после focus B — вновь Private video перед Upload B. Все проверки позднего promise, сохранности dialog B и выбранного new.bin оставлены, sleeps отсутствуют. Изменен только App.test.tsx, production TS/dist не пересобирались.
+- **Решение
+  руководителя:** ограниченное test-only исправление согласовано при подтверждении intermediate render и сохранении всех stale-response assertions; production/dist остаются стабильными. Независимый backend gate разрешен, UI suite повторяется после Reformat исправленного теста.
+-
+**Проверка:** первый повтор устранил исходную гонку, но обнаружил неоднозначный новый login selector: две допустимые кнопки header/banner,30/31. Разработчик ограничил query header banner; root повторил Rider. Последующий независимый полный Vitest31/31 прошел, включая A→401→B и оба202/204 delete сценария. Backend/dist не менялись; пройденные проверки не повторялись без причины.
+
+### Независимые финальные проверки
+
+Root подтвердил настоящий Rider MCP Reformat43 измененных файлов; после test-only R11 дополнительно переформатирован App.test.tsx с неизменным Program.cs. Дальше ревьюер выполнил последовательный gate без параллельных .NET/npm изменений разработчика.
+
+| Проверка                                             | Фактический результат                                                                                                                                        |
+|------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| React production build                               | PASS; текущий dist создан до единственной Release-сборки и затем не менялся                                                                                  |
+| Vitest                                               | Первый и промежуточный прогоны30/31 зарегистрированы в R11; окончательный полный31/31, пропусков0                                                            |
+| `dotnet build Ytdlp.Ui.slnx -c Release --no-restore` | PASS, четыре проекта,0 warnings/errors                                                                                                                       |
+| Автономные unit/component/process                    | 232/232, пропусков0; `.tools/reviewer-results/stage6-components-review.trx`                                                                                  |
+| HTTP/PostgreSQL, `TestCategory!=Storage`             | 155/155, пропусков0; `.tools/reviewer-results/stage6-postgresql-review.trx`                                                                                  |
+| Настоящие PostgreSQL/MinIO, `TestCategory=Storage`   | 61/61, пропусков0; `.tools/reviewer-results/stage6-storage-review.trx`; default pinned Bitnami image, без сборки MinIO из исходников                         |
+| Обычный publish и publish `--no-build`               | Оба PASS; `.tools/reviewer-stage6-publish` и `.tools/reviewer-stage6-publish-no-build`; SHA-256 всех3 файлов текущего dist совпадает с wwwroot обоих outputs |
+| Production dependencies                              | Npgsql присутствует; NUnit/NSubstitute/Testcontainers/Mvc.Testing/Test.Sdk/SQLite/ProcessFixture отсутствуют в обоих deps.json                               |
+| `openspec validate --all --strict --no-interactive`  | 10/10 PASS                                                                                                                                                   |
+| `git diff --check` и освобождение контейнеров        | PASS; `docker ps` по label org.testcontainers=true пуст после обоих integration прогонов                                                                     |
+
+В155/155 проверено восстановление всех шести прерванных состояний до первого HTTP, ручная точка продолжения с сохраненными файлами и очередью; прежние OIDC/cookie/CSRF/API/Version guards остались зелеными. PG race CleanupCommittedFirstRejectsLateCancelWithoutAnyCleanupIntent проверяет поздний cancel с устаревшим snapshot без сохраненного cleanup intent.
+
+В61/61 отдельно подтверждены успешный final artifact до ready-save для Download/Prepare без повторного процесса; Complete/Cleanup success до DB transition, включая утрату local workspace до retry; size/SHA corruption и missing track с reuse второй дорожки; потеря prepared после HTTP enqueue до worker claim с объяснением rewind; own DELETE202 за другим заданием и lost Deleted-save без нового S3 DELETE. Проверены intent-save rollback без storage I/O, обе очередности upload/cancel, forbidden cleanup cancel, частично успешная отмена с сохранностью чужого workspace, повтор Canceling без новых процессов, Canceled/Deleted→новое поколение и отказ старых действий, exact-key unknown MPU без удаления чужого upload, mismatch metadata/size без перезаписи и удаления replacement.
+
+Все три UnconfirmedStop cases прошли: user cancel и host interruption различаются; файлы сохраняются, следующий claim не начинается, StopApplication вызывается даже при отказе сохранить Failed. Настоящий автономный process runner отдельно прошел обычный tree-kill/pipe drain, callback fault без deadlock и bounded typed failure при незавершенном callback I/O. Controlled failure доказывает barrier, а не настоящую ошибку Kill ОС; нормальная остановка реального дерева проверена отдельно. Реальный force-kill/recreate остается отдельным root proof выше.
+
+Ранние предложения привели к указанным test gates и минимальному UI202/204 regression. Собственное диагностическое исправление разработчика DownloadQueries использует InitialState=Deleting для успешного retry удаления, чтобы история не показывала Completed; проверка final-save/delete retry также прошла. Новых незакрытых code findings к объему этапа 6 нет.
+
+### Итог этапа
+
+Независимая приемка этапа 6 завершена:232+155+61+31, build/publish/SHA/OpenSpec прошли; R11 закрыт после test-only исправления. Результаты переданы руководителю для заключительного Reformat документов и отдельного коммита. Полная визуальная приемка, отображение/локализация всей stage history и production runtime обеих архитектур остаются этапам 7–8; пользовательский Authentik в manual окружении не проверялся.
+
 ## Исходные вопросы для последующих этапов
 
-- После подключения worker на этапах 5–6 согласовать первичный DELETE собственного результата с очередью и правилом одной обработки. Сейчас LibraryDeletionService создает Running/StartedAt попытку в HTTP, а queue guard учитывает этот маркер; при живом worker нужна отдельная проверка конкурентных путей. Руководитель отнес вопрос к этапу 6, без блокировки этапа 4; возможное изменение own-delete API на queued `202` требует согласования с UI/документацией. Внешнее удаление файла без job может остаться HTTP; сеть не переносится в длинную транзакцию БД.
-- На этапе 6 проверить неподтвержденную остановку процесса: обычный настоящий tree-kill/callback cancel прошел, но ветка Win32 kill error либо timeout ожидания не должна разрешать filesystem cleanup активного workspace. Ревьюер передал source-level вопрос руководителю; failure repro не выполнялся и отдельный blocker этапа 5 не регистрировался.
+- Исторический вопрос этапов4–5 о первичном own DELETE решен в этапе6: queued202 с pending StartedAt=null, общий worker и минимальный честный UI; внешний файл без job остается HTTP. Сеть не помещается в длинную транзакцию БД; проверки очереди, intent-before-I/O и согласования успеха пройдены.
+- Исторический source-level вопрос этапа5 о неподтвержденной остановке принят в этапе6 через typed failure/stop barrier. Контролируемые user/host/DB-fail случаи и настоящий timeout callback I/O пройдены без cleanup/next claim; обычный настоящий tree-kill также остается зеленым. Это не было ретроспективным blocker этапа5 и не обещает безопасный restart одного WebHost при оставшихся потомках в прежней namespace.
 - Календарный Docker-тег: в исходной `.github/workflows/ci.yml` используется `--date=format`, поэтому `TZ=Europe/Moscow`
   не обеспечивает преобразование даты коммита. Указание уже есть в `REVIEW-FOLLOWUPS.md`; проверить исправление на этапе
   CI/поставки с коммитом около московской границы дня. Это не блокер этапа 1 при отсутствии изменения логики тегов.
-- После этапа 5 еще остаются production runtime yt-dlp/FFmpeg обеих архитектур, полная retry/recovery/cancel/delete и визуальная приемка.
+- После этапа 6 еще остаются production runtime yt-dlp/FFmpeg обеих архитектур и полная UI/визуальная приемка.
   Это запланированная работа следующих этапов; прежняя приемка адаптации тестовой структуры не означала готовности этих
-  возможностей. OIDC/cookie приняты в этапе 2, S3/ручные файлы — в этапе 3, PostgreSQL и сохраняемые API/очередь — в этапе 4, worker/media pipeline — в этапе 5 с указанными ограничениями окружения.
+  возможностей. OIDC/cookie приняты в этапе 2, S3/ручные файлы — в этапе 3, PostgreSQL и сохраняемые API/очередь — в этапе 4, worker/media pipeline — в этапе 5, полная reliability матрица — в этапе6 с указанными ограничениями окружения.

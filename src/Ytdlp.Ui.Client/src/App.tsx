@@ -74,16 +74,16 @@ export default function App() {
         setModal(null);
     }, [auth.sessionId]);
 
-    async function act(operation: () => Promise<unknown>, id: string, success: string) {
+    async function act<T>(operation: () => Promise<T>, id: string, success: string | ((result: T) => string)) {
         const token = auth.sessionId;
         if (!token || pending) return;
         setPending(id);
         setActionError('');
         setNotice('');
         try {
-            await operation();
+            const result = await operation();
             if (currentSession.current !== token) return;
-            setNotice(success);
+            setNotice(typeof success === 'function' ? success(result) : success);
             setDeleteFile(null);
             setCancelDownload(null);
             setRevision(value => value + 1);
@@ -218,7 +218,7 @@ export default function App() {
                     <button className="button text-button" disabled={!!pending}
                             onClick={closeConfirmation}>{messages.cancel}</button>
                     <button className="button danger" disabled={!!pending}
-                            onClick={() => void (deleteFile ? act(() => auth.authorized(token => api.deleteFile(deleteFile.id, token), auth.sessionId!), deleteFile.id, messages.fileRemoved) : act(() => auth.authorized(token => api.act(cancelDownload!.id, 'cancel', token), auth.sessionId!), cancelDownload!.id, messages.downloadCanceled))}>
+                            onClick={() => void (deleteFile ? act(() => auth.authorized(token => api.deleteFile(deleteFile.id, token), auth.sessionId!), deleteFile.id, result => result?.downloadId ? messages.fileDeleteQueued : messages.fileRemoved) : act(() => auth.authorized(token => api.act(cancelDownload!.id, 'cancel', token), auth.sessionId!), cancelDownload!.id, messages.downloadCanceled))}>
                         <Icon
                             name={deleteFile ? 'trash' : 'close'}/>{pending ? messages.working : deleteFile ? messages.delete : messages.cancelDownload}
                     </button>

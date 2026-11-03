@@ -58,7 +58,8 @@ public sealed class DownloadQueue(AppDbContext database, TimeProvider clock)
 
             record.Capture(aggregate, start.Intent, clock.GetUtcNow());
         }
-        else if (aggregate.State != DownloadState.Canceling || record.Intent != DownloadIntent.StopAndCleanUp)
+        else if (!(aggregate.State == DownloadState.Canceling && record.Intent == DownloadIntent.StopAndCleanUp
+                || aggregate.State == DownloadState.Deleting && record.Intent == DownloadIntent.ExecuteStage))
             throw new InvalidOperationException("Unexpected pending queue operation.");
 
         attempt.StartedAt = clock.GetUtcNow();

@@ -51,8 +51,8 @@ public static partial class MediaFormatSelection
                         : selected.Mp4 ? "mp4"
                         : CompatibleWebm(selected.Video.VideoCodec, selected.Audio.AudioCodec) ? "webm" : "mkv";
 
-        var outputId = selected.Audio is null ? tracks[0].ArtifactId : Guid.NewGuid();
-        var outputPath = selected.Audio is null ? tracks[0].RelativePath : $"prepared-{outputId:N}.{extension}";
+        var outputId = Guid.NewGuid();
+        var outputPath = $"prepared-{outputId:N}.{extension}";
 
         return new(Text(metadata, "title") ?? "video", tracks.ToArray(), outputId, outputPath, extension);
     }

@@ -11,6 +11,7 @@ public sealed class ControlledMediaTools
     public string Metadata { get; set; } = "{}";
     public bool FailPrepare { get; set; }
     public bool PauseDownloads { get; set; }
+    public bool StopUnconfirmedOnCancellation { get; set; }
     public bool KnownProgress { get; set; } = true;
     public bool CoverArtOnly { get; set; }
     public int PayloadLength { get; set; } = 100;
@@ -74,7 +75,17 @@ public sealed class ControlledMediaTools
                     );
 
                 DownloadEntered.TrySetResult();
-                if (PauseDownloads) await ContinueDownload.Task.WaitAsync(cancellationToken);
+
+                if (PauseDownloads)
+                    try
+                    {
+                        await ContinueDownload.Task.WaitAsync(cancellationToken);
+                    }
+                    catch (OperationCanceledException error) when (StopUnconfirmedOnCancellation)
+                    {
+                        throw new ProcessStopUnconfirmedException(error);
+                    }
+
                 var path = Value(command, "--output");
 
                 _kinds[path] = selector.Contains("\"1\"", StringComparison.Ordinal)   ? "audio"

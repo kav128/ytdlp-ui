@@ -167,6 +167,56 @@ public sealed class S3LibraryStorage(
         );
     }
 
+    public async Task AbortPublicationAsync(
+        Guid downloadId,
+        Guid publicationId,
+        string key,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!key.StartsWith($"downloads/{downloadId:D}/{publicationId:D}/", StringComparison.Ordinal))
+            throw new StorageConflictException();
+
+        try
+        {
+            string? keyMarker = null, uploadMarker = null;
+            ListMultipartUploadsResponse page;
+
+            do
+            {
+                page = await client.ListMultipartUploadsAsync(
+                           new ListMultipartUploadsRequest
+                           {
+                               BucketName = _bucket,
+                               Prefix = key,
+                               KeyMarker = keyMarker,
+                               UploadIdMarker = uploadMarker
+                           },
+                           cancellationToken
+                       );
+
+                foreach (var upload in (page.MultipartUploads ?? []).Where(item => item.Key == key))
+                    await client.AbortMultipartUploadAsync(
+                        new AbortMultipartUploadRequest
+                        {
+                            BucketName = _bucket,
+                            Key = key,
+                            UploadId = upload.UploadId
+                        },
+                        cancellationToken
+                    );
+
+                keyMarker = page.NextKeyMarker;
+                uploadMarker = page.NextUploadIdMarker;
+            } while (page.IsTruncated == true);
+        }
+        catch (Exception error) when (IsStorageError(error)
+                                   || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            throw new StorageUnavailableException(error);
+        }
+    }
+
     public async Task DeleteAsync(StoredObject file, CancellationToken cancellationToken)
     {
         try

@@ -124,21 +124,26 @@ React при загрузке и возвращении на вкладку за
 
 ### 4. Контракт API
 
-| Метод и маршрут                     | Доступ / защита                  | Результат                                                                                                                            |
-|-------------------------------------|----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `GET /api/auth/login?returnUrl=/`   | Навигация браузера               | Начало OIDC challenge; принимается только локальный returnUrl                                                                        |
-| `/signin-oidc`                      | Протокольный callback middleware | Проверка ответа и группы, создание ticket, возврат в библиотеку; ошибка не создает сессию                                            |
-| `GET /api/auth/session`             | Публичный, cookie опциональна    | `200 { authenticated, sessionId }`; без сессии false/null, sessionId — независимый ID UI, а не credential или ключ ticket            |
-| `GET /api/auth/csrf`                | Admin, cookie                    | `200 { requestToken }`, без кеширования                                                                                              |
-| `POST /api/auth/logout`             | Admin, cookie + CSRF             | `204` после отзыва текущего ticket                                                                                                   |
-| `POST /api/library/uploads`         | Admin, cookie + CSRF             | `multipart/form-data`, ровно одна file-part `file`; `201` с прежним LibraryFile DTO и Location на content URL после подтверждения S3 |
-| `GET /api/library`                  | Публичный                        | Полный список S3 в прежнем формате DTO                                                                                               |
-| `GET /api/library/{fileId}/content` | Публичный                        | Поток с attachment; `404` для отсутствующего объекта                                                                                 |
-| `DELETE /api/library/{fileId}`      | Admin, cookie + CSRF             | `204` после подтвержденного удаления, включая уже отсутствующий объект; guards связанных заданий сохраняются                         |
+| Метод и маршрут                     | Доступ / защита                  | Результат                                                                                                                                                       |
+|-------------------------------------|----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GET /api/auth/login?returnUrl=/`   | Навигация браузера               | Начало OIDC challenge; принимается только локальный returnUrl                                                                                                   |
+| `/signin-oidc`                      | Протокольный callback middleware | Проверка ответа и группы, создание ticket, возврат в библиотеку; ошибка не создает сессию                                                                       |
+| `GET /api/auth/session`             | Публичный, cookie опциональна    | `200 { authenticated, sessionId }`; без сессии false/null, sessionId — независимый ID UI, а не credential или ключ ticket                                       |
+| `GET /api/auth/csrf`                | Admin, cookie                    | `200 { requestToken }`, без кеширования                                                                                                                         |
+| `POST /api/auth/logout`             | Admin, cookie + CSRF             | `204` после отзыва текущего ticket                                                                                                                              |
+| `POST /api/library/uploads`         | Admin, cookie + CSRF             | `multipart/form-data`, ровно одна file-part `file`; `201` с прежним LibraryFile DTO и Location на content URL после подтверждения S3                            |
+| `GET /api/library`                  | Публичный                        | Полный список S3 в прежнем формате DTO                                                                                                                          |
+| `GET /api/library/{fileId}/content` | Публичный                        | Поток с attachment; `404` для отсутствующего объекта                                                                                                            |
+| `DELETE /api/library/{fileId}`      | Admin, cookie + CSRF             | Своя публикация: `202 { downloadId }` с Location после постановки в общую очередь; внешняя/подтвержденно удаленная: `204`; guards связанных заданий сохраняются |
 
 Прежние `POST /api/auth/login` и `POST /api/auth/refresh` удаляются; они не остаются запасным способом входа.
 Неизвестный API-маршрут возвращает `404`, а не React HTML. Управление заданиями сохраняет маршруты и доменные правила,
 получая cookie/CSRF вместо Bearer.
+
+Own DELETE сохраняет попытку/намерение до I/O и исполняется общей FIFO-очередью, чтобы не работать параллельно другому
+медиаэтапу. `202` не обещает отсутствие файла: он остается в каталоге до подтверждения удаления. DB/state/publication-id
+guards отклоняются до принятия; конфликт S3 metadata либо недоступность после202 становятся Failed/ResumeState=Deleting
+с publication_changed/storage_unavailable. Retry продолжает удаление, не скачивание. Внешние файлы удаляются синхронно.
 
 Ошибки отправки: `400 invalid_upload` — нет file-part, частей больше одной или форма повреждена; `401/403` — доступ;
 `400 antiforgery_failed` — CSRF; `503 storage_unavailable` — недоступность S3; прочие ошибки используют существующий

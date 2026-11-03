@@ -189,7 +189,11 @@ public sealed class DownloadPersistenceTests : SetupBase
                 )
             );
 
-            Assert.That(view.ResumeState, Is.EqualTo(state == DownloadState.Failed ? "Uploading" : "Downloading"));
+            Assert.That(view.ResumeState, Is.EqualTo("Downloading"));
+
+            if (state == DownloadState.Failed)
+                Assert.That(view.Attempts[1].Error, Does.Contain("media plan is missing"));
+
             Assert.That(view.PublicationId == saved.PublicationId, Is.EqualTo(state == DownloadState.Failed));
             using var scope = Factory.Services.CreateScope();
 

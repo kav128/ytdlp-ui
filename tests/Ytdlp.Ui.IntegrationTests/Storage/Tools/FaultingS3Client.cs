@@ -19,6 +19,7 @@ public sealed class FaultingS3Client(string endpoint) : AmazonS3Client(
     public string? Fault { get; set; }
     public int CompletedCalls { get; private set; }
     public int UploadedParts { get; private set; }
+    public int DeleteCalls { get; private set; }
 
     public override async Task<InitiateMultipartUploadResponse> InitiateMultipartUploadAsync(
         InitiateMultipartUploadRequest request,
@@ -79,7 +80,11 @@ public sealed class FaultingS3Client(string endpoint) : AmazonS3Client(
             };
 
             if (Fault == "mismatch_size")
-                replacement.Metadata.Add("upload-operation", metadata.Metadata["x-amz-meta-upload-operation"]);
+                foreach (var name in metadata.Metadata.Keys)
+                    replacement.Metadata.Add(
+                        name.StartsWith("x-amz-meta-", StringComparison.Ordinal) ? name[11..] : name,
+                        metadata.Metadata[name]
+                    );
 
             await base.PutObjectAsync(replacement, cancellationToken);
 
@@ -108,6 +113,8 @@ public sealed class FaultingS3Client(string endpoint) : AmazonS3Client(
         CancellationToken cancellationToken = default
     )
     {
+        DeleteCalls++;
+
         if (Fault == "replace_before_delete")
             await base.PutObjectAsync(
                 new PutObjectRequest

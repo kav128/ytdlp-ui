@@ -118,7 +118,7 @@ public sealed class SystemProcessRunnerTests
     }
 
     [Test]
-    public async Task CancellationDuringCallbackAfterParentExitIsBounded()
+    public async Task CancellationWithUnfinishedIoReportsStopUnconfirmedWithinTheGracePeriod()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -142,7 +142,7 @@ public sealed class SystemProcessRunnerTests
             cancel.Cancel();
 
             await Assert.ThrowsAsync(
-                Is.InstanceOf<OperationCanceledException>(),
+                Is.TypeOf<ProcessStopUnconfirmedException>(),
                 async () => await execution.WaitAsync(TimeSpan.FromSeconds(10))
             );
 

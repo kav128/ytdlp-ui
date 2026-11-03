@@ -15,6 +15,7 @@ public sealed class MediaPipeline(
     IServiceScopeFactory scopes,
     MediaProcessor media,
     WorkspaceStorage workspace,
+    ArtifactIntegrity integrity,
     ILibraryStorage storage,
     TimeProvider clock
 )
@@ -52,7 +53,25 @@ public sealed class MediaPipeline(
                         var position = index;
                         var artifact = await ReadArtifactAsync(track.ArtifactId, cancellationToken);
 
-                        if (!artifact.IsReady)
+                        var valid = await integrity.IsValidAsync(artifact, cancellationToken);
+
+                        if (!valid
+                         && !artifact.IsReady
+                         && artifact.Sha256 is null
+                         && File.Exists(Resolve(track.RelativePath)))
+                        {
+                            await media.VerifyTrackAsync(
+                                track,
+                                Resolve(track.RelativePath),
+                                directory,
+                                cancellationToken
+                            );
+
+                            await ReadyArtifactAsync(work, track.ArtifactId, track.RelativePath, cancellationToken);
+                            valid = true;
+                        }
+
+                        if (!valid)
                         {
                             await media.DownloadAsync(
                                 work.OriginalUrl,
@@ -104,8 +123,68 @@ public sealed class MediaPipeline(
                     if (plan is null)
                         throw new MediaProcessingException("prepare_failed", "Saved media plan is missing.");
 
-                    plan = await media.PrepareAsync(plan, Resolve, directory, cancellationToken);
-                    await SavePreparedAsync(work, plan, cancellationToken);
+                    var prepared = await ReadArtifactAsync(plan.OutputArtifactId, cancellationToken);
+                    var preparedValid = await integrity.IsValidAsync(prepared, cancellationToken);
+
+                    if (!preparedValid
+                     && !prepared.IsReady
+                     && prepared.Sha256 is null
+                     && !plan.Tracks.Any(track => track.ArtifactId == plan.OutputArtifactId)
+                     && File.Exists(Resolve(plan.OutputPath)))
+                    {
+                        await media.VerifyTrackAsync(
+                            new(
+                                plan.OutputArtifactId,
+                                ArtifactKind.Combined,
+                                "prepared",
+                                plan.OutputExtension,
+                                "unknown",
+                                "unknown",
+                                null,
+                                null,
+                                plan.OutputPath
+                            ),
+                            Resolve(plan.OutputPath),
+                            directory,
+                            cancellationToken
+                        );
+
+                        await ReadyArtifactAsync(work, plan.OutputArtifactId, plan.OutputPath, cancellationToken);
+                        preparedValid = true;
+                    }
+
+                    if (!preparedValid)
+                    {
+                        if (!await TracksValidAsync(plan, cancellationToken))
+                        {
+                            await RewindAsync(
+                                work,
+                                DownloadState.Preparing,
+                                DownloadState.Downloading,
+                                cancellationToken
+                            );
+
+                            break;
+                        }
+
+                        plan = await media.PlanPreparationAsync(plan, Resolve, directory, cancellationToken);
+
+                        if (prepared.IsReady || prepared.Sha256 is not null)
+                        {
+                            var newId = Guid.NewGuid();
+
+                            plan = plan with
+                            {
+                                OutputArtifactId = newId,
+                                OutputPath = $"prepared-{newId:N}.{plan.OutputExtension}"
+                            };
+                        }
+
+                        await SavePreparationPlanAsync(work, plan, cancellationToken);
+                        plan = await media.PrepareAsync(plan, Resolve, directory, cancellationToken);
+                        await SavePreparedAsync(work, plan, cancellationToken);
+                    }
+
                     await AdvanceAsync(work, DownloadState.Preparing, plan.OutputArtifactId, false, cancellationToken);
 
                     break;
@@ -113,7 +192,20 @@ public sealed class MediaPipeline(
                     if (plan is null)
                         throw new MediaProcessingException("upload_failed", "Saved media plan is missing.");
 
-                    await PublishAsync(work, plan, cancellationToken);
+                    if (!await PublishAsync(work, plan, cancellationToken))
+                    {
+                        await RewindAsync(
+                            work,
+                            DownloadState.Uploading,
+                            await TracksValidAsync(plan, cancellationToken)
+                                ? DownloadState.Preparing
+                                : DownloadState.Downloading,
+                            cancellationToken
+                        );
+
+                        break;
+                    }
+
                     await AdvanceAsync(work, DownloadState.Uploading, plan.OutputArtifactId, true, cancellationToken);
 
                     break;
@@ -154,6 +246,13 @@ public sealed class MediaPipeline(
 
             if (transfer is not null)
             {
+                await storage.AbortPublicationAsync(
+                    work.DownloadId,
+                    work.PublicationId,
+                    transfer.ObjectKey,
+                    cancellationToken
+                );
+
                 var file = await storage.FindAsync(transfer.ObjectKey, cancellationToken);
 
                 if (file is not null)
@@ -175,6 +274,17 @@ public sealed class MediaPipeline(
         if (!transition.IsAccepted) throw new OperationCanceledException("Attempt changed.");
 
         record.Capture(aggregate, transition.Intent, clock.GetUtcNow());
+
+        foreach (var transfer in await db.Transfers
+                                         .Where(item => item.DownloadId == work.DownloadId
+                                                     && item.PublicationId == work.PublicationId
+                                          )
+                                         .ToArrayAsync(cancellationToken))
+        {
+            transfer.Status = TransferStatus.Aborted;
+            transfer.UpdatedAt = clock.GetUtcNow();
+        }
+
         await FinishAttemptAsync(db, record, StageStatus.Canceled, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
     }
@@ -292,7 +402,7 @@ public sealed class MediaPipeline(
                 }
             );
 
-        if (plan.Tracks.Length > 1)
+        if (!plan.Tracks.Any(track => track.ArtifactId == plan.OutputArtifactId))
             database.Artifacts.Add(
                 new DownloadArtifactRecord
                 {
@@ -345,16 +455,155 @@ public sealed class MediaPipeline(
         await database.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task PublishAsync(DownloadWorkItem work, MediaPlan plan, CancellationToken cancellationToken)
+    private async Task SavePreparationPlanAsync(
+        DownloadWorkItem work,
+        MediaPlan plan,
+        CancellationToken cancellationToken
+    )
     {
+        using var scope = scopes.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var record = await CurrentAsync(database, work, cancellationToken);
+
+        if (record.State != DownloadState.Preparing) throw new OperationCanceledException("Attempt changed.");
+
+        record.MediaPlanJson = JsonSerializer.Serialize(plan);
+
+        var artifact = await database.Artifacts.SingleOrDefaultAsync(
+                           item => item.Id == plan.OutputArtifactId,
+                           cancellationToken
+                       );
+
+        if (artifact is null)
+        {
+            artifact = new DownloadArtifactRecord
+            {
+                Id = plan.OutputArtifactId,
+                DownloadId = work.DownloadId,
+                WorkspaceGeneration = work.WorkspaceGeneration,
+                Kind = ArtifactKind.Prepared
+            };
+
+            database.Artifacts.Add(artifact);
+        }
+
+        artifact.RelativePath = plan.OutputPath;
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<bool> TracksValidAsync(MediaPlan plan, CancellationToken cancellationToken)
+    {
+        foreach (var track in plan.Tracks)
+            if (!await integrity.IsValidAsync(
+                     await ReadArtifactAsync(track.ArtifactId, cancellationToken),
+                     cancellationToken
+                 ))
+                return false;
+
+        return true;
+    }
+
+    private async Task RewindAsync(
+        DownloadWorkItem work,
+        DownloadState stage,
+        DownloadState resume,
+        CancellationToken cancellationToken
+    )
+    {
+        using var scope = scopes.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var record = await CurrentAsync(database, work, cancellationToken);
+        var aggregate = record.RestoreAggregate();
+        var transition = aggregate.Apply(new ArtifactsUnavailable(work.AttemptId, stage, resume));
+
+        if (!transition.IsAccepted) throw new OperationCanceledException("Attempt changed.");
+
+        record.Capture(aggregate, transition.Intent, clock.GetUtcNow());
+
+        var previous = await database.Stages.SingleAsync(
+                           item => item.AttemptId == work.AttemptId && item.Stage == DownloadStages.FromState(stage),
+                           cancellationToken
+                       );
+
+        previous.Status = StageStatus.Pending;
+        previous.StartedAt = null;
+        previous.FinishedAt = null;
+        previous.ErrorCode = "artifacts_unavailable";
+        previous.ErrorDetails = "Size/SHA-256 validation requires an earlier stage.";
+        await StartStageAsync(database, work, resume, cancellationToken);
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task StartStageAsync(
+        AppDbContext database,
+        DownloadWorkItem work,
+        DownloadState state,
+        CancellationToken cancellationToken
+    )
+    {
+        var stageName = DownloadStages.FromState(state);
+
+        var stage = await database.Stages.SingleOrDefaultAsync(
+                        item => item.AttemptId == work.AttemptId && item.Stage == stageName,
+                        cancellationToken
+                    );
+
+        if (stage is null)
+        {
+            stage = new StageExecutionRecord
+            {
+                Id = Guid.NewGuid(),
+                DownloadId = work.DownloadId,
+                AttemptId = work.AttemptId,
+                Stage = stageName
+            };
+
+            database.Stages.Add(stage);
+        }
+
+        stage.Status = StageStatus.Running;
+        stage.StartedAt = clock.GetUtcNow();
+        stage.FinishedAt = null;
+        stage.Progress = null;
+        stage.ReusedFromStageId = null;
+    }
+
+    private async Task<bool> PublishAsync(DownloadWorkItem work, MediaPlan plan, CancellationToken cancellationToken)
+    {
+        using (var reading = scopes.CreateScope())
+        {
+            var prior = await reading.ServiceProvider.GetRequiredService<AppDbContext>()
+                                     .Transfers.AsNoTracking()
+                                     .SingleOrDefaultAsync(
+                                          item => item.DownloadId == work.DownloadId
+                                               && item.PublicationId == work.PublicationId,
+                                          cancellationToken
+                                      );
+
+            if (prior is not null)
+            {
+                var observed = await storage.FindAsync(prior.ObjectKey, cancellationToken);
+
+                if (observed is not null)
+                {
+                    if (!Matches(observed, prior)) throw new StorageConflictException();
+
+                    return true;
+                }
+
+                await storage.AbortPublicationAsync(
+                    work.DownloadId,
+                    work.PublicationId,
+                    prior.ObjectKey,
+                    cancellationToken
+                );
+            }
+        }
+
         var artifact = await ReadArtifactAsync(plan.OutputArtifactId, cancellationToken);
         var path = workspace.Resolve(work.DownloadId, work.WorkspaceGeneration, artifact.RelativePath);
 
-        if (!artifact.IsReady
-         || !File.Exists(path)
-         || new FileInfo(path).Length != artifact.Size
-         || await MediaProcessor.Sha256Async(path, cancellationToken) != artifact.Sha256)
-            throw new MediaProcessingException("upload_failed", "Prepared artifact is missing or changed.");
+        if (!await integrity.IsValidAsync(artifact, cancellationToken)) return false;
 
         StorageTransferRecord transfer;
 
@@ -383,6 +632,13 @@ public sealed class MediaPipeline(
                        };
 
             if (database.Entry(transfer).State == EntityState.Detached) database.Transfers.Add(transfer);
+            transfer.ArtifactId = artifact.Id;
+            transfer.ExpectedSize = artifact.Size!.Value;
+            transfer.Sha256 = artifact.Sha256;
+
+            transfer.ObjectKey =
+                $"downloads/{work.DownloadId:D}/{work.PublicationId:D}/{PublicationName(plan.Title, plan.OutputExtension)}";
+
             transfer.Status = TransferStatus.Uploading;
             transfer.UpdatedAt = clock.GetUtcNow();
             await database.SaveChangesAsync(cancellationToken);
@@ -435,6 +691,8 @@ public sealed class MediaPipeline(
         var confirmed = await storage.FindAsync(transfer.ObjectKey, cancellationToken);
 
         if (confirmed is null || !Matches(confirmed, transfer)) throw new StorageUnavailableException();
+
+        return true;
     }
 
     private async Task AdvanceAsync(
@@ -481,18 +739,7 @@ public sealed class MediaPipeline(
 
         if (aggregate.State == DownloadState.Completed)
             await FinishAttemptAsync(database, record, StageStatus.Succeeded, cancellationToken);
-        else
-            database.Stages.Add(
-                new StageExecutionRecord
-                {
-                    Id = Guid.NewGuid(),
-                    DownloadId = work.DownloadId,
-                    AttemptId = work.AttemptId,
-                    Stage = DownloadStages.FromState(aggregate.State),
-                    Status = StageStatus.Running,
-                    StartedAt = clock.GetUtcNow()
-                }
-            );
+        else await StartStageAsync(database, work, aggregate.State, cancellationToken);
 
         await database.SaveChangesAsync(cancellationToken);
     }
@@ -536,7 +783,7 @@ public sealed class MediaPipeline(
         attempt.Status = record.AttemptStatus;
         attempt.FinishedAt = clock.GetUtcNow();
         attempt.ErrorCode = record.ErrorCode;
-        attempt.ErrorDetails = record.ErrorDetails;
+        attempt.ErrorDetails = record.ErrorDetails ?? attempt.ErrorDetails;
 
         foreach (var stage in await database.Stages
                                             .Where(item => item.AttemptId == attempt.Id
@@ -582,14 +829,14 @@ public sealed class MediaPipeline(
         return record;
     }
 
-    private static bool Matches(StoredObject file, StorageTransferRecord transfer) => file.Size == transfer.ExpectedSize
-                                                                                   && file.PublicationId
-                                                                                   == transfer.PublicationId.ToString(
-                                                                                          "D"
-                                                                                      )
-                                                                                   && file.DownloadId
-                                                                                   == transfer.DownloadId.ToString("D")
-                                                                                   && file.Sha256 == transfer.Sha256;
+    public static bool Matches(StoredObject file, StorageTransferRecord transfer) => file.Size == transfer.ExpectedSize
+                                                                                  && file.PublicationId
+                                                                                  == transfer.PublicationId.ToString(
+                                                                                         "D"
+                                                                                     )
+                                                                                  && file.DownloadId
+                                                                                  == transfer.DownloadId.ToString("D")
+                                                                                  && file.Sha256 == transfer.Sha256;
 
     private static string PublicationName(string title, string extension)
     {

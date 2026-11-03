@@ -29,6 +29,7 @@ public interface ILibraryStorage
     );
 
     Task DeleteAsync(StoredObject file, CancellationToken cancellationToken);
+    Task AbortPublicationAsync(Guid downloadId, Guid publicationId, string key, CancellationToken cancellationToken);
 }
 
 public interface IStorageUpload : IAsyncDisposable

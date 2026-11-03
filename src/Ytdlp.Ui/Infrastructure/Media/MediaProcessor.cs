@@ -57,6 +57,8 @@ public sealed partial class MediaProcessor(IProcessRunner runner, IOptions<Media
         CancellationToken cancellationToken
     )
     {
+        var temporary = outputPath + ".incoming." + track.Extension;
+
         var arguments = CommonArguments()
                        .Concat(
                             new[]
@@ -75,7 +77,7 @@ public sealed partial class MediaProcessor(IProcessRunner runner, IOptions<Media
                               + track.FormatId.Replace("\\", "\\\\").Replace("\"", "\\\"")
                               + "\"]",
                                 "--output",
-                                outputPath,
+                                temporary,
                                 "--",
                                 url.Trim()
                             }
@@ -116,10 +118,21 @@ public sealed partial class MediaProcessor(IProcessRunner runner, IOptions<Media
 
         RequireSuccess(result, "download_failed");
 
-        if (!File.Exists(outputPath))
+        if (!File.Exists(temporary))
             throw new MediaProcessingException("download_failed", "The selected track was not produced.");
 
-        var probe = await ProbeAsync(outputPath, workspace, cancellationToken);
+        await VerifyTrackAsync(track, temporary, workspace, cancellationToken);
+        File.Move(temporary, outputPath, overwrite: true);
+    }
+
+    public async Task VerifyTrackAsync(
+        MediaTrack track,
+        string path,
+        string workspace,
+        CancellationToken cancellationToken
+    )
+    {
+        var probe = await ProbeAsync(path, workspace, cancellationToken);
 
         var expectedVideo =
             track.Kind is Domain.Primitives.ArtifactKind.Video or Domain.Primitives.ArtifactKind.Combined;
@@ -134,6 +147,44 @@ public sealed partial class MediaProcessor(IProcessRunner runner, IOptions<Media
             );
     }
 
+    public async Task<MediaPlan> PlanPreparationAsync(
+        MediaPlan plan,
+        Func<string, string> resolve,
+        string workspace,
+        CancellationToken cancellationToken
+    )
+    {
+        string extension;
+
+        if (plan.Tracks.Length > 1)
+        {
+            var video = await ProbeAsync(resolve(plan.Tracks[0].RelativePath), workspace, cancellationToken);
+            var audio = await ProbeAsync(resolve(plan.Tracks[1].RelativePath), workspace, cancellationToken);
+
+            extension = MediaFormatSelection.CompatibleMp4(video.VideoCodec ?? "", audio.AudioCodec ?? "")
+                            ? "mp4"
+                            : MediaFormatSelection.CompatibleWebm(video.VideoCodec ?? "", audio.AudioCodec ?? "")
+                                ? "webm"
+                                : "mkv";
+        }
+        else
+            extension = ExtensionFor(
+                await ValidateCombinedAsync(resolve(plan.Tracks[0].RelativePath), workspace, cancellationToken),
+                plan.OutputExtension
+            );
+
+        var id = plan.Tracks.Any(track => track.ArtifactId == plan.OutputArtifactId)
+                     ? Guid.NewGuid()
+                     : plan.OutputArtifactId;
+
+        return plan with
+        {
+            OutputArtifactId = id,
+            OutputExtension = extension,
+            OutputPath = $"prepared-{id:N}.{extension}"
+        };
+    }
+
     public async Task<MediaPlan> PrepareAsync(
         MediaPlan plan,
         Func<string, string> resolve,
@@ -142,27 +193,10 @@ public sealed partial class MediaProcessor(IProcessRunner runner, IOptions<Media
     )
     {
         var output = resolve(plan.OutputPath);
+        var temporary = output + ".partial." + plan.OutputExtension;
 
         if (plan.Tracks.Length > 1)
         {
-            var video = await ProbeAsync(resolve(plan.Tracks[0].RelativePath), workspace, cancellationToken);
-            var audio = await ProbeAsync(resolve(plan.Tracks[1].RelativePath), workspace, cancellationToken);
-
-            var extension = MediaFormatSelection.CompatibleMp4(video.VideoCodec ?? "", audio.AudioCodec ?? "")
-                                ? "mp4"
-                                : MediaFormatSelection.CompatibleWebm(video.VideoCodec ?? "", audio.AudioCodec ?? "")
-                                    ? "webm"
-                                    : "mkv";
-
-            plan = plan with
-            {
-                OutputExtension = extension,
-                OutputPath = $"prepared-{plan.OutputArtifactId:N}.{extension}"
-            };
-
-            output = resolve(plan.OutputPath);
-            var temporary = output + ".partial." + plan.OutputExtension;
-
             var arguments = new List<string>
             {
                 "-nostdin",
@@ -187,33 +221,40 @@ public sealed partial class MediaProcessor(IProcessRunner runner, IOptions<Media
                          );
 
             RequireSuccess(result, "prepare_failed");
-            await ValidateCombinedAsync(temporary, workspace, cancellationToken);
-            File.Move(temporary, output, overwrite: true);
+        }
+        else
+        {
+            await using var source = new FileStream(
+                resolve(plan.Tracks[0].RelativePath),
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan
+            );
+
+            await using var destination = new FileStream(
+                temporary,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan
+            );
+
+            await source.CopyToAsync(destination, 128 * 1024, cancellationToken);
         }
 
-        var verified = await ValidateCombinedAsync(output, workspace, cancellationToken);
+        var verified = await ValidateCombinedAsync(temporary, workspace, cancellationToken);
         var actualExtension = ExtensionFor(verified, plan.OutputExtension);
 
         if (actualExtension != plan.OutputExtension)
-        {
-            var relative = Path.ChangeExtension(plan.OutputPath, actualExtension);
-            File.Move(output, resolve(relative), overwrite: true);
+            throw new MediaProcessingException(
+                "prepare_failed",
+                "The produced container differs from the persisted preparation plan."
+            );
 
-            plan = plan with
-            {
-                OutputExtension = actualExtension,
-                OutputPath = relative,
-                Tracks = plan.Tracks.Select(track => track.ArtifactId == plan.OutputArtifactId
-                                                         ? track with
-                                                         {
-                                                             RelativePath = relative,
-                                                             Extension = actualExtension
-                                                         }
-                                                         : track
-                              )
-                             .ToArray()
-            };
-        }
+        File.Move(temporary, output, overwrite: true);
 
         return plan;
     }

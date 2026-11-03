@@ -43,9 +43,11 @@ public static class LibraryEndpoints
                   {
                       if (!LibraryFile.TryDecode(id, out var key)) return Results.NotFound();
 
-                      await deletion.DeleteAsync(key, cancellationToken);
+                      var result = await deletion.DeleteAsync(key, cancellationToken);
 
-                      return Results.NoContent();
+                      return result.DownloadId is { } downloadId
+                                 ? Results.Accepted($"/api/downloads/{downloadId}", new { downloadId })
+                                 : Results.NoContent();
                   }
               )
              .RequireAuthorization("Admin")

@@ -14,14 +14,17 @@ public sealed class DownloadWorker(
     MediaPipeline pipeline,
     IOptions<WorkerOptions> options,
     TimeProvider clock,
+    IHostApplicationLifetime lifetime,
     ILogger<DownloadWorker> logger
 ) : BackgroundService
 {
+    private bool _stopClaiming;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!options.Value.Enabled) return;
 
-        while (!stoppingToken.IsCancellationRequested)
+        while (!stoppingToken.IsCancellationRequested && !_stopClaiming)
         {
             DownloadWorkItem? work = null;
 
@@ -65,22 +68,17 @@ public sealed class DownloadWorker(
     {
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var execution = pipeline.RunAsync(work, operation.Token);
+        Exception? failure = null;
 
         try
         {
             while (!execution.IsCompleted)
             {
-                await Task.WhenAny(execution, Task.Delay(TimeSpan.FromMilliseconds(200), stoppingToken));
+                await Task.WhenAny(execution, Task.Delay(200, stoppingToken));
 
                 if (execution.IsCompleted) break;
 
-                if (stoppingToken.IsCancellationRequested)
-                {
-                    operation.Cancel();
-
-                    break;
-                }
-
+                stoppingToken.ThrowIfCancellationRequested();
                 using var scope = scopes.CreateScope();
 
                 var record = await scope.ServiceProvider.GetRequiredService<AppDbContext>()
@@ -98,52 +96,81 @@ public sealed class DownloadWorker(
 
             await execution;
         }
-        catch (OperationCanceledException)
-        {
-            operation.Cancel();
-
-            try
-            {
-                await execution;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-
-            if (stoppingToken.IsCancellationRequested)
-                await pipeline.FailAsync(
-                    work,
-                    "interrupted",
-                    "The process was stopped before the attempt finished.",
-                    cleanup.Token
-                );
-            else
-                try
-                {
-                    await pipeline.CancelAsync(work, cleanup.Token);
-                }
-                catch (Exception error)
-                {
-                    await FailAsync(work, error, cleanup.Token);
-                }
-        }
         catch (Exception error)
         {
+            failure = error;
             operation.Cancel();
 
             try
             {
                 await execution;
+            }
+            catch (ProcessStopUnconfirmedException stop)
+            {
+                failure = stop;
             }
             catch (Exception)
             {
             }
-
-            using var persistence = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await FailAsync(work, error, persistence.Token);
         }
+
+        if (failure is null) return;
+
+        using var persistence = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        if (failure is ProcessStopUnconfirmedException)
+        {
+            _stopClaiming = true;
+
+            try
+            {
+                await pipeline.FailAsync(
+                    work,
+                    "process_stop_unconfirmed",
+                    "Stopping could not be confirmed. Recreate the application container before retrying.",
+                    persistence.Token
+                );
+            }
+            finally
+            {
+                lifetime.StopApplication();
+            }
+
+            return;
+        }
+
+        if (stoppingToken.IsCancellationRequested)
+        {
+            await pipeline.FailAsync(
+                work,
+                "interrupted",
+                "Processing stopped; its files were retained for a manual retry.",
+                persistence.Token
+            );
+
+            return;
+        }
+
+        using var reading = scopes.CreateScope();
+
+        var current = await reading.ServiceProvider.GetRequiredService<AppDbContext>()
+                                   .Downloads.AsNoTracking()
+                                   .SingleAsync(item => item.Id == work.DownloadId, persistence.Token);
+
+        if (current.CurrentAttemptId != work.AttemptId) return;
+
+        if (current.State == DownloadState.Canceling)
+        {
+            try
+            {
+                await pipeline.CancelAsync(work, persistence.Token);
+            }
+            catch (Exception error)
+            {
+                await FailAsync(work, error, persistence.Token);
+            }
+        }
+        else await FailAsync(work, failure, persistence.Token);
     }
 
     private async Task FailAsync(DownloadWorkItem work, Exception error, CancellationToken cancellationToken)
@@ -156,14 +183,13 @@ public sealed class DownloadWorker(
 
         var code = error switch
         {
-            MediaProcessingException media => media.Code,
-            StorageConflictException       => "publication_changed",
-            Win32Exception                 => "tool_unavailable",
+            MediaProcessingException media => media.Code, StorageConflictException  => "publication_changed",
+            StorageUnavailableException    => "storage_unavailable", Win32Exception => "tool_unavailable",
             _ => record.State switch
             {
                 DownloadState.CleaningUp => "cleanup_failed", DownloadState.Uploading => "upload_failed",
                 DownloadState.Preparing  => "prepare_failed", DownloadState.Canceling => "cancel_failed",
-                _                        => "download_failed"
+                DownloadState.Deleting   => "delete_failed", _                        => "download_failed"
             }
         };
 

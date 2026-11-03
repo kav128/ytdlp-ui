@@ -54,6 +54,8 @@ builder.Services.AddLibraryStorage(builder.Configuration);
 builder.Services.AddScoped<DownloadQueries>();
 builder.Services.AddScoped<DownloadCommands>();
 builder.Services.AddScoped<DownloadQueue>();
+builder.Services.AddScoped<StartupRecovery>();
+builder.Services.AddScoped<DownloadRetryPlanner>();
 builder.Services.AddMediaProcessing(builder.Configuration);
 
 var app = builder.Build();
@@ -76,6 +78,7 @@ app.MapFallbackToFile("index.html");
 await using (var scope = app.Services.CreateAsyncScope())
 {
     await scope.ServiceProvider.GetRequiredService<AppDbContext>().InitializeAsync();
+    await scope.ServiceProvider.GetRequiredService<StartupRecovery>().RecoverAsync();
 }
 
 await app.RunAsync();

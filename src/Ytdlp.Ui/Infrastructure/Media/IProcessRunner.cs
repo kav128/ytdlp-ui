@@ -9,6 +9,9 @@ public sealed record ProcessCommand(
 
 public sealed record ProcessResult(int ExitCode, string Output, string Diagnostics, bool OutputTruncated);
 
+public sealed class ProcessStopUnconfirmedException(Exception? inner = null)
+    : Exception("The process or its redirected I/O did not stop within the shutdown grace period.", inner);
+
 public interface IProcessRunner
 {
     Task<ProcessResult> RunAsync(

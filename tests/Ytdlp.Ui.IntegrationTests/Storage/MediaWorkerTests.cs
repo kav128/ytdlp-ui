@@ -21,16 +21,22 @@ using Ytdlp.Ui.IntegrationTests.Tools;
 namespace Ytdlp.Ui.IntegrationTests.Storage;
 
 [TestFixture]
-public sealed class MediaWorkerTests : SetupBase
+public sealed partial class MediaWorkerTests : SetupBase
 {
     private ControlledMediaTools _tools = null!;
     private FaultingS3Client _faults = null!;
     private bool _failCleanup;
+    private bool _partialCleanup;
+    private ArtifactSaveFailure _artifactFailure = null!;
+    private TransitionSaveGate _saveGate = null!;
 
     protected override void ConfigureApplication(IWebHostBuilder builder)
     {
         _tools = new ControlledMediaTools { Metadata = MediaMetadata.Combined };
         _failCleanup = false;
+        _partialCleanup = false;
+        _artifactFailure = new ArtifactSaveFailure();
+        _saveGate = new TransitionSaveGate { Target = (DownloadState)(-1) };
 
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
                                               new Dictionary<string, string?>
@@ -43,6 +49,7 @@ public sealed class MediaWorkerTests : SetupBase
 
         builder.ConfigureTestServices(services =>
             {
+                services.AddDbContext<AppDbContext>(options => options.AddInterceptors(_artifactFailure, _saveGate));
                 services.RemoveAll<IProcessRunner>();
                 services.AddSingleton(_tools.Runner);
                 services.RemoveAll<IAmazonS3>();
@@ -57,8 +64,21 @@ public sealed class MediaWorkerTests : SetupBase
                             );
 
                         workspace.When(item => item.Clean(Arg.Any<Guid>(), Arg.Any<Guid>()))
-                                 .Do(_ =>
+                                 .Do(call =>
                                       {
+                                          if (_partialCleanup)
+                                          {
+                                              _partialCleanup = false;
+
+                                              File.Delete(
+                                                  workspace.Resolve(
+                                                      call.ArgAt<Guid>(0),
+                                                      call.ArgAt<Guid>(1),
+                                                      "partial-cleanup-first"
+                                                  )
+                                              );
+                                          }
+
                                           if (_failCleanup) throw new IOException("Injected cleanup failure");
                                       }
                                   );

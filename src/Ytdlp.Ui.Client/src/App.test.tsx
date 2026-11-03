@@ -1,4 +1,4 @@
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {beforeEach, afterEach, describe, expect, it, vi} from 'vitest';
 import App from './App';
 import {api, ApiError, type Download, type Session} from './api/client';
@@ -50,6 +50,23 @@ afterEach(() => {
 });
 
 describe('library and SSO workspace', () => {
+    it.each([true, false])('distinguishes queued own deletion from confirmed external deletion (queued=%s)', async queued => {
+        vi.spyOn(api, 'deleteFile').mockResolvedValue(queued ? {downloadId: 'own-job'} : undefined);
+        render(<App/>);
+        fireEvent.click(await screen.findByRole('button', {name: `${messages.delete}: Public notes.txt`}));
+        if (!queued) vi.mocked(api.library).mockResolvedValue([]);
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', {name: messages.delete}));
+        expect(await screen.findByText(queued ? messages.fileDeleteQueued : messages.fileRemoved)).toBeInTheDocument();
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+        if (queued) {
+            expect(screen.getByText('Public notes.txt')).toBeInTheDocument();
+            expect(screen.queryByText(messages.fileRemoved)).not.toBeInTheDocument();
+            vi.mocked(api.library).mockResolvedValue([]);
+            await waitFor(() => expect(screen.getByRole('button', {name: messages.refresh})).not.toBeDisabled());
+            fireEvent.click(screen.getByRole('button', {name: messages.refresh}));
+        }
+        await waitFor(() => expect(screen.queryByText('Public notes.txt')).not.toBeInTheDocument());
+    });
     it('preserves the original URL input while validating its trimmed form', async () => {
         const create = vi.spyOn(api, 'create').mockResolvedValue(download);
         render(<App/>);
@@ -108,6 +125,7 @@ describe('library and SSO workspace', () => {
         }>();
         vi.spyOn(api, 'upload').mockReturnValue(oldUpload.promise);
         render(<App/>);
+        expect(await screen.findByText('Private video')).toBeInTheDocument();
         fireEvent.click(await screen.findByRole('button', {name: messages.uploadFile}));
         fireEvent.change(screen.getByLabelText(messages.chooseFile), {target: {files: [new File(['x'], 'old.bin')]}});
         fireEvent.submit(screen.getByLabelText(messages.chooseFile).closest('form')!);
@@ -115,8 +133,11 @@ describe('library and SSO workspace', () => {
         vi.mocked(api.downloads).mockRejectedValueOnce(new ApiError(401, 'unauthorized'));
         fireEvent(document, new Event('visibilitychange'));
         await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByText('Private video')).not.toBeInTheDocument());
+        expect(await within(screen.getByRole('banner')).findByRole('button', {name: messages.login})).toBeInTheDocument();
         vi.mocked(api.session).mockResolvedValue({authenticated: true, sessionId: 'new-cookie-session'});
         fireEvent.focus(window);
+        expect(await screen.findByText('Private video')).toBeInTheDocument();
         fireEvent.click(await screen.findByRole('button', {name: messages.uploadFile}));
         fireEvent.change(screen.getByLabelText(messages.chooseFile), {target: {files: [new File(['new'], 'new.bin')]}});
         await act(async () => oldUpload.resolve({

@@ -6,6 +6,7 @@ export type Download = {
     allowedActions: string[]; attempts: Attempt[];
 };
 export type Session = { authenticated: boolean; sessionId: string | null };
+export type LibraryDeletion = { downloadId: string };
 
 export class ApiError extends Error {
     constructor(public status: number, public code: string) {
@@ -47,7 +48,7 @@ export const api = {
         method: 'POST',
         csrf
     }),
-    deleteFile: (id: string, csrf: string) => request<void>(`/library/${encodeURIComponent(id)}`, {
+    deleteFile: (id: string, csrf: string) => request<LibraryDeletion | void>(`/library/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         csrf
     }),

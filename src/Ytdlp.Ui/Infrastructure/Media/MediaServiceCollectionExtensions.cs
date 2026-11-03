@@ -30,6 +30,7 @@ public static class MediaServiceCollectionExtensions
         services.AddSingleton<IProcessRunner, SystemProcessRunner>();
         services.AddSingleton<MediaProcessor>();
         services.AddSingleton<WorkspaceStorage>();
+        services.AddSingleton<ArtifactIntegrity>();
         services.AddSingleton<MediaPipeline>();
         services.AddHostedService<DownloadWorker>();
 

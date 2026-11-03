@@ -97,7 +97,7 @@ public sealed class DownloadQueries(AppDbContext database)
     {
         AttemptStatus.Pending => DownloadState.Queued.ToString(),
         AttemptStatus.Running when attempt.Id == record.CurrentAttemptId => record.State.ToString(),
-        AttemptStatus.Succeeded => attempt.Reason == AttemptReason.DeleteResult ? "Deleted" : "Completed",
+        AttemptStatus.Succeeded => attempt.InitialState == DownloadState.Deleting ? "Deleted" : "Completed",
         AttemptStatus.Canceled => "Canceled",
         AttemptStatus.Failed => "Failed",
         _ => attempt.Status.ToString()

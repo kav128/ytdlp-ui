@@ -50,9 +50,10 @@
     "emptyDownloadsDescription": "Add a video to start your first download.",
     "retryLoad": "Try again",
     "fileRemoved": "File removed from the library.",
+    "fileDeleteQueued": "Deletion queued. The file remains available until removal is confirmed.",
     "downloadCreated": "Download added to the queue.",
     "downloadRetried": "A new attempt has been added to the queue.",
-    "downloadCanceled": "Download canceled. Its history has been kept.",
+    "downloadCanceled": "Cancellation requested. Processing must stop and cleanup finish before it is canceled.",
     "fileCount": "{count} files",
     "queueCount": "{count} in progress",
     "sizeUnits": [
@@ -78,6 +79,9 @@
     },
     "errors": {
         "metadata_failed": "The source metadata could not be read.",
+        "process_stop_unconfirmed": "Stopping could not be confirmed. Recreate the application container before retrying.",
+        "artifacts_unavailable": "A missing or changed file requires an earlier stage.",
+        "delete_failed": "Deletion could not be confirmed. Retry deletion from the saved stage.",
         "playlist_not_supported": "Use a link to one video. Playlists are not supported.",
         "live_not_supported": "Live and upcoming streams are not supported.",
         "format_unavailable": "No suitable video with audio up to 1080p is available.",
