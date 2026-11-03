@@ -15,6 +15,7 @@ public class AntiforgeryTests : SetupBase
     [TestCase("POST", "/api/downloads/00000000-0000-0000-0000-000000000000/cancel")]
     [TestCase("DELETE", "/api/library/weekend")]
     [TestCase("POST", "/api/auth/logout")]
+    [TestCase("POST", "/api/library/uploads")]
     public async Task MissingOrForgedCsrfCannotChangeState(string method, string path)
     {
         await OidcBrowser.SignInAsync(Factory, Client);
@@ -42,8 +43,8 @@ public class AntiforgeryTests : SetupBase
             Assert.That(stillSignedIn.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         }
 
-        using var file = await Client.GetAsync("/api/library/weekend/content");
-        Assert.That(file.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        using var files = await Client.GetAsync("/api/library");
+        Assert.That(files.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
     [Test]

@@ -17,11 +17,11 @@ export async function request<T>(path: string, options: {
     method?: string; body?: unknown; csrf?: string; signal?: AbortSignal;
 } = {}): Promise<T> {
     const headers = new Headers();
-    if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+    if (options.body !== undefined && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
     if (options.csrf) headers.set('X-CSRF-TOKEN', options.csrf);
     const response = await fetch(`/api${path}`, {
         method: options.method ?? 'GET', headers, signal: options.signal, credentials: 'same-origin',
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        body: options.body === undefined ? undefined : options.body instanceof FormData ? options.body : JSON.stringify(options.body),
     });
     if (!response.ok) {
         const problem = await response.json().catch(() => ({})) as { code?: string };
@@ -32,6 +32,11 @@ export async function request<T>(path: string, options: {
 
 export const api = {
     library: (signal?: AbortSignal) => request<LibraryFile[]>('/library', {signal}),
+    upload: (file: File, csrf: string, signal?: AbortSignal) => {
+        const form = new FormData();
+        form.append('file', file);
+        return request<LibraryFile>('/library/uploads', {method: 'POST', body: form, csrf, signal});
+    },
     login: () => window.location.assign('/api/auth/login?returnUrl=%2F'),
     session: (signal?: AbortSignal) => request<Session>('/auth/session', {signal}),
     csrf: () => request<{ requestToken: string }>('/auth/csrf'),

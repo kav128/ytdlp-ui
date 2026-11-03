@@ -8,12 +8,17 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.EventLog;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using NSubstitute;
+using Ytdlp.Ui.Features.Library;
+using Ytdlp.Ui.Infrastructure.Storage;
 
 namespace Ytdlp.Ui.IntegrationTests.Tools;
 
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     public FakeOidcProvider Provider { get; } = new();
+    public ILibraryStorage Storage { get; } = Substitute.For<ILibraryStorage>();
     private readonly string? _directory;
     private HttpClient? _backchannel;
     private readonly string _databasePath;
@@ -29,6 +34,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         _databasePath = databasePath;
         _configure = configure;
+        Storage.ListAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(Array.Empty<LibraryFile>()));
     }
 
     public HttpClient CreateBrowserClient() => CreateClient(
@@ -57,6 +63,8 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                                                   ["Oidc:ClientSecret"] = FakeOidcProvider.ClientSecret,
                                                   ["Oidc:GroupsClaim"] = "groups",
                                                   ["Oidc:AdminGroup"] = "admins",
+                                                  ["Paths:WorkDirectory"] =
+                                                      Path.Combine(Path.GetDirectoryName(_databasePath)!, "work"),
                                                   ["Paths:DataProtectionKeysDirectory"] = Path.Combine(
                                                       Path.GetDirectoryName(_databasePath)!,
                                                       "keys"
@@ -71,6 +79,13 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                                           "Authentik",
                                           options => options.Backchannel = _backchannel
                                       )
+        );
+
+        builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<ILibraryStorage>();
+                services.AddSingleton(Storage);
+            }
         );
 
         builder.ConfigureLogging(logging =>

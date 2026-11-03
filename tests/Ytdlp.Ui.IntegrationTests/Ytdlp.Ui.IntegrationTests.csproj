@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <ItemGroup>
+        <PackageReference Include="Testcontainers" />
         <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
         <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
         <ProjectReference Include="../../src/Ytdlp.Ui/Ytdlp.Ui.csproj" />

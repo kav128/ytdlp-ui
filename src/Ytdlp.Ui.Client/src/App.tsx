@@ -8,6 +8,7 @@ import HistoryDialog from './features/downloads/HistoryDialog';
 import NewDownloadDialog from './features/downloads/NewDownloadDialog';
 import {useDownloads} from './features/downloads/useDownloads';
 import LibraryList from './features/library/LibraryList';
+import UploadDialog from './features/library/UploadDialog';
 import {messages} from './locales';
 import {errorLabel, formatNumber, formatSize} from './locales/format';
 
@@ -24,7 +25,7 @@ export default function App() {
         loading: downloadsLoading,
         error: downloadsError
     } = useDownloads(auth.sessionId, revision, auth.authorized, auth.unauthorized);
-    const [modal, setModal] = useState<'create' | null>(null);
+    const [modal, setModal] = useState<'create' | 'upload' | null>(null);
     const [deleteFile, setDeleteFile] = useState<LibraryFile | null>(null);
     const [cancelDownload, setCancelDownload] = useState<Download | null>(null);
     const [history, setHistory] = useState<Download | null>(null);
@@ -164,9 +165,13 @@ export default function App() {
                 <div className="section-heading library-heading">
                     <div><p className="eyebrow">{messages.fileCount.replace('{count}', formatNumber(files.length))}</p>
                         <h1 id="library-title">{messages.library}</h1><p>{messages.libraryCaption}</p></div>
-                    <button className="icon-button refresh-button" aria-label={messages.refresh}
-                            onClick={() => setRevision(value => value + 1)} disabled={libraryLoading}><Icon
-                        name="retry"/></button>
+                    <div className="library-actions">
+                        {auth.sessionId && <button className="button primary"
+                                                   onClick={() => setModal('upload')}>{messages.uploadFile}</button>}
+                        <button className="icon-button refresh-button" aria-label={messages.refresh}
+                                onClick={() => setRevision(value => value + 1)} disabled={libraryLoading}><Icon
+                            name="retry"/></button>
+                    </div>
                 </div>
                 <div className="library-panel">
                     <div className="library-summary"><span><Icon name="library"/>{messages.filesLabel}<span
@@ -198,6 +203,15 @@ export default function App() {
                 setRevision(value => value + 1);
             }}/>}
         {history && auth.sessionId && <HistoryDialog download={history} onClose={() => setHistory(null)}/>}
+        {modal === 'upload' && auth.sessionId && <UploadDialog key={auth.sessionId} sessionId={auth.sessionId}
+                                                               authorized={auth.authorized}
+                                                               unauthorized={auth.unauthorized}
+                                                               onClose={() => setModal(null)} onUploaded={() => {
+            if (currentSession.current !== auth.sessionId) return;
+            setModal(null);
+            setNotice(messages.fileUploaded);
+            setRevision(value => value + 1);
+        }}/>}
         {(deleteFile || cancelDownload) && auth.sessionId &&
             <Dialog title={deleteFile ? messages.deleteTitle : messages.cancelTitle} onClose={closeConfirmation}>
                 <p className="dialog-description">{deleteFile ? messages.deleteDescription : messages.cancelDescription}</p>

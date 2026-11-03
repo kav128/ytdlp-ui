@@ -9,6 +9,7 @@ using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Ytdlp.Ui.Configuration;
+using Ytdlp.Ui.Infrastructure.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -49,6 +50,7 @@ builder.Services.AddOptions<ForwardedHeadersOptions>()
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddAppDatabase(builder.Configuration);
 builder.Services.AddAdminAuthentication(builder.Configuration);
+builder.Services.AddLibraryStorage(builder.Configuration);
 builder.Services.AddSingleton<DemoStore>();
 
 var app = builder.Build();

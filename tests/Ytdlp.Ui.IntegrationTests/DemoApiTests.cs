@@ -4,6 +4,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Ytdlp.Ui.Infrastructure.Mocking;
+using Ytdlp.Ui.Features.Library;
+using Ytdlp.Ui.Infrastructure.Storage;
+using NSubstitute;
 
 namespace Ytdlp.Ui.IntegrationTests;
 
@@ -13,8 +16,23 @@ public class DemoApiTests : SetupBase
     [Test]
     public async Task PublicLibraryAndContentAreAvailableWithoutLogin()
     {
+        var bytes = new byte[]
+        {
+            0,
+            1,
+            2,
+            255
+        };
+
+        var file = LibraryFile.Create("external/test.bin", bytes.Length, DateTimeOffset.UtcNow);
+        Factory.Storage.ListAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(new[] { file }));
+        var stream = new MemoryStream(bytes);
+
+        Factory.Storage.OpenAsync("external/test.bin", Arg.Any<CancellationToken>())
+               .Returns(Task.FromResult<StorageContent?>(new(stream, bytes.Length, stream)));
+
         var files = await Client.GetFromJsonAsync<LibraryFile[]>("/api/library");
-        Assert.That(files, Has.Length.EqualTo(3));
+        Assert.That(files, Has.Length.EqualTo(1));
         using var response = await Client.GetAsync(files![0].ContentUrl);
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(response.Content.Headers.ContentDisposition?.DispositionType, Is.EqualTo("attachment"));
@@ -143,20 +161,17 @@ public class DemoApiTests : SetupBase
     }
 
     [Test]
-    public async Task DeletingAFileKeepsItsHistoryAndReusingUrlKeepsId()
+    public async Task DeletingAnExternalFileDoesNotChangeDownloadHistory()
     {
         await Login();
         var downloads = await Client.GetFromJsonAsync<DemoDownload[]>("/api/downloads");
-        var completed = downloads!.Single(download => download.State == "Completed");
-        using var deletion = await Client.DeleteAsync("/api/library/design-notes");
+        var id = LibraryFile.Create("external/test.bin", 0, DateTimeOffset.UtcNow).Id;
+        using var deletion = await Client.DeleteAsync($"/api/library/{id}");
         Assert.That(deletion.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
-        using var content = await Client.GetAsync("/api/library/design-notes/content");
+        using var content = await Client.GetAsync($"/api/library/{id}/content");
         Assert.That(content.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
-        using var repeated = await Client.PostAsJsonAsync("/api/downloads", new { url = completed.Url });
-        var result = await repeated.Content.ReadFromJsonAsync<DemoDownload>();
-        Assert.That(repeated.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
-        Assert.That(result!.Id, Is.EqualTo(completed.Id));
-        Assert.That(result.Attempts.Length, Is.EqualTo(3));
+        var after = await Client.GetFromJsonAsync<DemoDownload[]>("/api/downloads");
+        Assert.That(JsonSerializer.Serialize(after), Is.EqualTo(JsonSerializer.Serialize(downloads)));
     }
 
     [Test]

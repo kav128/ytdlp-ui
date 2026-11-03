@@ -12,6 +12,10 @@ public sealed class AdminAntiforgeryFilter(IAntiforgery antiforgery) : IEndpoint
         {
             try
             {
+                // Do not read/buffer a multipart form to discover its token.
+                if (!context.HttpContext.Request.Headers.ContainsKey("X-CSRF-TOKEN"))
+                    throw new AntiforgeryValidationException("CSRF header is required.");
+
                 await antiforgery.ValidateRequestAsync(context.HttpContext);
             }
             catch (AntiforgeryValidationException)

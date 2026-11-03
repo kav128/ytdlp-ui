@@ -47,6 +47,13 @@ public class HelloApplicationTests : SetupBase
         Assert.That(scriptPath, Is.Not.Empty);
         using var scriptResponse = await Client.GetAsync(scriptPath);
         Assert.That(scriptResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
-        Assert.That(await scriptResponse.Content.ReadAsStringAsync(), Does.Contain("Demo workspace"));
+
+        Assert.That(
+            scriptResponse.Content.Headers.ContentType?.MediaType,
+            Is.AnyOf("text/javascript", "application/javascript")
+        );
+
+        var script = await scriptResponse.Content.ReadAsStringAsync();
+        Assert.That(script, Is.Not.Empty.And.Not.Contains("<!doctype html").IgnoreCase);
     }
 }

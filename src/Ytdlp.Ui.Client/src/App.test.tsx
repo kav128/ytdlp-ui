@@ -50,6 +50,76 @@ afterEach(() => {
 });
 
 describe('library and SSO workspace', () => {
+    it('publishes a file once and reloads the public catalog after confirmation', async () => {
+        const complete = deferred<{
+            id: string;
+            name: string;
+            size: number;
+            lastModified: string;
+            contentUrl: string
+        }>();
+        const upload = vi.spyOn(api, 'upload').mockReturnValue(complete.promise);
+        render(<App/>);
+        fireEvent.click(await screen.findByRole('button', {name: messages.uploadFile}));
+        fireEvent.change(screen.getByLabelText(messages.chooseFile), {target: {files: [new File(['x'], 'note.txt')]}});
+        const form = screen.getByLabelText(messages.chooseFile).closest('form')!;
+        fireEvent.submit(form);
+        fireEvent.submit(form);
+        await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+        expect(screen.getByText(messages.uploadingFile)).toBeInTheDocument();
+        const before = vi.mocked(api.library).mock.calls.length;
+        await act(async () => complete.resolve({
+            id: 'new',
+            name: 'note.txt',
+            size: 1,
+            lastModified: '',
+            contentUrl: ''
+        }));
+        expect(await screen.findByText(messages.fileUploaded)).toBeInTheDocument();
+        await waitFor(() => expect(api.library).toHaveBeenCalledTimes(before + 1));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    it('keeps an upload error visible without claiming publication', async () => {
+        vi.spyOn(api, 'upload').mockRejectedValue(new ApiError(503, 'storage_unavailable'));
+        render(<App/>);
+        fireEvent.click(await screen.findByRole('button', {name: messages.uploadFile}));
+        fireEvent.change(await screen.findByLabelText(messages.chooseFile), {target: {files: [new File([], 'empty.bin')]}});
+        fireEvent.submit(screen.getByLabelText(messages.chooseFile).closest('form')!);
+        expect(await screen.findByRole('alert')).toHaveTextContent(messages.errors.storage_unavailable);
+        expect(screen.queryByText(messages.fileUploaded)).not.toBeInTheDocument();
+    });
+    it('ignores an old upload completion after another cookie session opens a new upload form', async () => {
+        const oldUpload = deferred<{
+            id: string;
+            name: string;
+            size: number;
+            lastModified: string;
+            contentUrl: string
+        }>();
+        vi.spyOn(api, 'upload').mockReturnValue(oldUpload.promise);
+        render(<App/>);
+        fireEvent.click(await screen.findByRole('button', {name: messages.uploadFile}));
+        fireEvent.change(screen.getByLabelText(messages.chooseFile), {target: {files: [new File(['x'], 'old.bin')]}});
+        fireEvent.submit(screen.getByLabelText(messages.chooseFile).closest('form')!);
+        await waitFor(() => expect(api.upload).toHaveBeenCalledTimes(1));
+        vi.mocked(api.downloads).mockRejectedValueOnce(new ApiError(401, 'unauthorized'));
+        fireEvent(document, new Event('visibilitychange'));
+        await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+        vi.mocked(api.session).mockResolvedValue({authenticated: true, sessionId: 'new-cookie-session'});
+        fireEvent.focus(window);
+        fireEvent.click(await screen.findByRole('button', {name: messages.uploadFile}));
+        fireEvent.change(screen.getByLabelText(messages.chooseFile), {target: {files: [new File(['new'], 'new.bin')]}});
+        await act(async () => oldUpload.resolve({
+            id: 'old',
+            name: 'old.bin',
+            size: 1,
+            lastModified: '',
+            contentUrl: ''
+        }));
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect((screen.getByLabelText(messages.chooseFile) as HTMLInputElement).files?.[0]?.name).toBe('new.bin');
+        expect(screen.queryByText(messages.fileUploaded)).not.toBeInTheDocument();
+    });
     it('shows public files without requesting private data anonymously', async () => {
         vi.mocked(api.session).mockResolvedValue({authenticated: false, sessionId: null});
         render(<App/>);

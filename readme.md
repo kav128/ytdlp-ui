@@ -8,10 +8,14 @@ MVP находятся в [OpenSpec](openspec/README.md), согласованн
 CSRF-защита команд. SQLite создается и мигрирует до приема запросов; сессии, их истечение и отзыв сохраняются при
 перезапуске с прежними БД и ключами Data Protection.
 
-Задания и каталог пока демонстрационные: доступны интерфейс очереди, создание по URL, повтор, отмена и удаление трех
-текстовых файлов. Изменения этих данных сбрасываются при перезапуске. Агрегат задания и постоянная схема истории уже
-существуют, но подключение API к ним, MinIO, ручная отправка файлов и реальные медиапроцессы выполняются в следующих
-этапах. Прогресс не симулируется. Интерфейс поддерживает телефон/десктоп, системную тему и EN/RU по браузеру.
+Библиотека читает все объекты настроенного S3 bucket, включая внешние файлы и все страницы listing. Администратор может
+отправить произвольный локальный файл; посетитель скачивает точные байты через бэкенд. Одинаковые имена получают разные
+ключи. Удаление внешних объектов и собственных сохраненных публикаций работает синхронно, с проверкой состояния
+агрегата и сохранением истории. Очередь повторного удаления и восстановление после рестарта появятся на следующих этапах.
+
+API заданий пока демонстрационное: создание по URL, повтор и отмена сбрасываются при перезапуске. Постоянная схема
+заданий/истории существует, но подключение API к ней и реальные медиапроцессы выполняются в следующих этапах.
+Прогресс не симулируется. Интерфейс поддерживает телефон/десктоп, системную тему и EN/RU по браузеру.
 
 ## Структура
 
@@ -65,6 +69,12 @@ Scopes `openid` и `profile` должны возвращать `sub` и наст
 | `Oidc__AdminGroup`                   | Группа администраторов, например `ytdlp-ui-admins`                                         |
 | `ConnectionStrings__AppDatabase`     | Файловая SQLite; в контейнере `Data Source=/data/db/app.db`                                |
 | `Paths__DataProtectionKeysDirectory` | Постоянный каталог ключей; в контейнере `/data/keys`                                       |
+| `Paths__WorkDirectory`               | Временные файлы операций на volume `/data/work`; каталог доступен UID 1654                 |
+| `S3__Endpoint`                       | URL S3/MinIO, например `https://minio.example.test`                                        |
+| `S3__Region`                         | Регион подписи запросов, по умолчанию `us-east-1`                                          |
+| `S3__Bucket`                         | Существующий bucket, управляемый вне приложения                                            |
+| `S3__AccessKey`, `S3__SecretKey`     | Серверные учетные данные S3                                                                |
+| `S3__ForcePathStyle`                 | Адресация path style для MinIO, по умолчанию `true`                                        |
 | `ReverseProxy__KnownProxies__0`      | Доверенный IP reverse proxy; дополнительные адреса задаются индексами                      |
 | `ReverseProxy__KnownNetworks__0`     | Доверенная CIDR-сеть вместо отдельных адресов при необходимости                            |
 | `ReverseProxy__AllowedHosts__0`      | Разрешенный внешний host из X-Forwarded-Host                                               |
@@ -111,6 +121,7 @@ build/publish без копирования в исходники. Совмес�
 ```powershell
 $env:ConnectionStrings__AppDatabase = 'Data Source=' + (Join-Path (Get-Location) 'data/db/app.db')
 $env:Paths__DataProtectionKeysDirectory = Join-Path (Get-Location) 'data/keys'
+$env:Paths__WorkDirectory = Join-Path (Get-Location) 'data/work'
 dotnet run --project src/Ytdlp.Ui -c Release --no-build
 ```
 
@@ -120,22 +131,23 @@ proxy к бэкенду на 5080; рекомендуемый SSO-сценари
 
 ## API
 
-| Метод и маршрут                   | Доступ и запрос                                | Ответ                                                                                                                           |
-|-----------------------------------|------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
-| `GET /api/auth/login?returnUrl=/` | Навигация браузера; returnUrl только локальный | OIDC redirect в Authentik; `400` для внешнего returnUrl                                                                         |
-| `/signin-oidc`                    | Callback стандартного OIDC middleware          | После проверки — возврат в библиотеку; безопасный `authError=access_denied` или `login_failed` при отказе, без новых полномочий |
-| `GET /api/auth/session`           | Публичный, cookie опциональна                  | `200 { authenticated, sessionId }`; без действующей административной сессии false/null                                          |
-| `GET /api/auth/csrf`              | Администратор, cookie                          | `200 { requestToken }` для X-CSRF-TOKEN                                                                                         |
-| `POST /api/auth/logout`           | Администратор, cookie + CSRF                   | `204` после сохраненного отзыва                                                                                                 |
-| `GET /api/library`                | Публичный                                      | Полный демонстрационный массив `{ id, name, size, lastModified, contentUrl }`                                                   |
-| `GET /api/library/{id}/content`   | Публичный                                      | Поток демонстрационного файла с attachment; `404` при отсутствии                                                                |
-| `DELETE /api/library/{id}`        | Администратор, cookie + CSRF                   | `204`, включая отсутствующий файл; `409 invalid_state` для незавершенной очистки связанного задания                             |
-| `GET /api/downloads`              | Администратор                                  | Массив демонстрационных заданий                                                                                                 |
-| `GET /api/downloads/{id}`         | Администратор                                  | Задание или `404`                                                                                                               |
-| `POST /api/downloads`             | Администратор, cookie + CSRF; `{ url }`        | `201` с Location; `202` для повтора удаленного результата; `400 invalid_url`, `409 download_already_exists`                     |
-| `POST /api/downloads/{id}/retry`  | Администратор, cookie + CSRF                   | `202`, новая попытка; `404` или `409 invalid_state`                                                                             |
-| `POST /api/downloads/{id}/cancel` | Администратор, cookie + CSRF                   | `202`; `404` или `409 invalid_state`                                                                                            |
-| `GET /api/hello`                  | Публичный                                      | `200 text/plain`, `Hello World`                                                                                                 |
+| Метод и маршрут                   | Доступ и запрос                                                                   | Ответ                                                                                                                           |
+|-----------------------------------|-----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `GET /api/auth/login?returnUrl=/` | Навигация браузера; returnUrl только локальный                                    | OIDC redirect в Authentik; `400` для внешнего returnUrl                                                                         |
+| `/signin-oidc`                    | Callback стандартного OIDC middleware                                             | После проверки — возврат в библиотеку; безопасный `authError=access_denied` или `login_failed` при отказе, без новых полномочий |
+| `GET /api/auth/session`           | Публичный, cookie опциональна                                                     | `200 { authenticated, sessionId }`; без действующей административной сессии false/null                                          |
+| `GET /api/auth/csrf`              | Администратор, cookie                                                             | `200 { requestToken }` для X-CSRF-TOKEN                                                                                         |
+| `POST /api/auth/logout`           | Администратор, cookie + CSRF                                                      | `204` после сохраненного отзыва                                                                                                 |
+| `GET /api/library`                | Публичный                                                                         | Все страницы S3 как плоский массив `{ id, name, size, lastModified, contentUrl }`                                               |
+| `GET /api/library/{id}/content`   | Публичный                                                                         | Поток S3 с attachment, octet-stream, Content-Length и nosniff; `404` при подтвержденном отсутствии                              |
+| `DELETE /api/library/{id}`        | Администратор, cookie + CSRF                                                      | `204`, включая отсутствующий объект; `409 publication_changed` при конфликте состояния/публикации; `503 storage_unavailable`    |
+| `POST /api/library/uploads`       | Администратор, cookie + CSRF; multipart/form-data с единственной file-part `file` | `201` с `{ id, name, size, lastModified, contentUrl }` после проверки S3; `400 invalid_upload` или `503 storage_unavailable`    |
+| `GET /api/downloads`              | Администратор                                                                     | Массив демонстрационных заданий                                                                                                 |
+| `GET /api/downloads/{id}`         | Администратор                                                                     | Задание или `404`                                                                                                               |
+| `POST /api/downloads`             | Администратор, cookie + CSRF; `{ url }`                                           | `201` с Location; `202` для повтора удаленного результата; `400 invalid_url`, `409 download_already_exists`                     |
+| `POST /api/downloads/{id}/retry`  | Администратор, cookie + CSRF                                                      | `202`, новая попытка; `404` или `409 invalid_state`                                                                             |
+| `POST /api/downloads/{id}/cancel` | Администратор, cookie + CSRF                                                      | `202`; `404` или `409 invalid_state`                                                                                            |
+| `GET /api/hello`                  | Публичный                                                                         | `200 text/plain`, `Hello World`                                                                                                 |
 
 Административный API возвращает `401` без сессии и `403` без прав, без HTML-перенаправления. CSRF проверяется до
 побочных действий; неверное подтверждение дает `400 antiforgery_failed`. Auth-ответы не кешируются. Неперехваченная
@@ -147,13 +159,44 @@ React HTML; отсутствующий static asset — `404`, маршруты 
 `progress=null`, история `{ number, state, createdAt, error }`. Полная история этапов и работа worker еще не подключены
 к API.
 
+## Потоковая библиотека и отправка файлов
+
+`id` — канонический Base64url полного UTF-8 S3-ключа. Каталог не ограничен заданиями из БД; вложенные префиксы отображаются
+плоско. Имя скачивания берется из последнего компонента ключа, без управляющих символов и путей. Ответ всегда
+`application/octet-stream` с `attachment` и `nosniff`, без redirect на MinIO и без Range-докачки. Ошибка после начала
+потока прерывает передачу; JSON в файл не дописывается. `404` означает подтвержденное отсутствие объекта в доступном
+bucket. Отсутствующий bucket, `403`, сеть и timeout дают `503`, а не подтверждение удаления. Для своих публикаций UUID и
+ключ никогда не переиспользуются; устаревший publication-id дает409 и не затрагивает новый ключ. If-Match передается
+как дополнительная защита поддерживающему storage (412 превращается в409), но проверенные старые MinIO игнорируют его:
+атомарность против внешнего writer, заменившего ТОТ ЖЕ ключ строго между HEAD и DELETE, не гарантируется.
+
+Upload принимает ровно одну file-part `file`; поля и дополнительные части отклоняются. Cookie/роль и CSRF-header
+проверяются до чтения тела. Форма читается `MultipartReader`, без `IFormFile` и буферизации целого файла в RAM. Одна часть
+временно записывается в `/data/work/uploads/<случайный-id>/part`, передается в S3 и переиспользуется; буфер памяти —128KiB.
+Для известного Content-Length размер части выбирается с учетом 10000 частей S3 и границ 5MiB–5GiB; framing входит в
+верхнюю оценку. При неизвестной длине часть может занимать до 5GiB временного диска. Нужны доступное место на `/data`,
+поддержка выбранного размера хранилищем и подходящие транспортные timeout. Продуктовый предел размера не вводится.
+
+Ключ ручного файла — `uploads/<случайный-id>/<безопасное-имя>`, он не перезаписывает совпадающие имена. До проверки конца
+всей формы Complete не вызывается. Успех возвращается после HEAD с размером и metadata собственного operation id;
+потеря ответа Complete проверяется тем же способом без повторного Complete. Незавершенные parts и временные файлы
+очищаются только для своей операции; потерянный ответ Initiate согласуется listing multipart по собственному ключу.
+При недоступном S3 сервер не может гарантировать немедленный abort: bucket lifecycle для старых незавершенных multipart
+настраивается владельцем хранилища. Production-приложение не создает bucket и не меняет policy.
+
+Kestrel body limit отключается только для авторизованного upload после CSRF. На внешнем proxy также разрешите нужный
+размер, например nginx `client_max_body_size 0`, `proxy_request_buffering off`, и настройте подходящие timeout. Это
+технические параметры окружения, а не ограничения типов или размера продукта. SDK не повторяет внешние команды
+автоматически и использует отмену запроса вместо фиксированного timeout полного S3-запроса.
+
 ## Тесты
 
 После сборки:
 
 ```powershell
 dotnet test tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj -c Release --no-build
-dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build
+dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build --filter 'TestCategory!=Storage'
+dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build --filter 'TestCategory=Storage'
 npm --prefix src/Ytdlp.Ui.Client test
 ```
 
@@ -170,10 +213,24 @@ InitialPersistence без потери истории и CSRF всех кома�
 
 Vitest проверяет SSO-навигацию, отсутствие парольной формы и browser tokens, общий CSRF-запрос, публичную библиотеку,
 `401`/сетевые ошибки, EN/RU и поздний успешный create из прежней сессии, который не должен закрывать новую URL-форму.
-Реальная отправка файлов и Testcontainers MinIO будут добавлены следующим этапом; текущие интеграционные тесты Docker не
+Интеграционные тесты namespace `Storage` требуют работающий Docker Engine и сеть для закрепленных
+тестовых образов; они запускают настоящий MinIO с динамическим портом, отдельными bucket и данными каждого теста.
+Используется готовый `bitnamilegacy/minio:2025.7.23-debian-12-r5` по digest
+`sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20`, без компиляции MinIO и без пользовательского
+сервера. `MINIO_TEST_IMAGE` позволяет проверить другой готовый совместимый image, включая локальный
+`minio/minio:RELEASE.2025-04-22T22-12-26Z`: нужны `minio` в PATH и writable `/tmp/minio-data`. Иначе default image
+подтягивается из registry; закрепленные версии защищают воспроизводимость. Отдельный diagnostic test фиксирует
+поддержку/игнорирование If-Match, не обещая ее для старого MinIO.
+Отсутствие Docker — ошибка, а не skip. Прочие HTTP/OIDC/SQLite-тесты заменяют только внешний storage boundary и Docker не
 требуют.
 
 ## Публикация и контейнер
+
+`compose.yaml` подключает приложение к существующим MinIO и Authentik через переменные окружения. Для вспомогательного
+локального MinIO: `docker compose -f compose.yaml -f compose.minio.yaml up --build`. Готовый закрепленный image MinIO
+сохраняет данные в отдельном volume; его штатный init создает `ytdlp-ui` и публичную download policy только в этом
+локальном opt-in варианте. Учетные данные задаются `LOCAL_MINIO_ROOT_USER`/`LOCAL_MINIO_ROOT_PASSWORD`; порты19000/19001.
+Приложение не создает bucket и не меняет настройки существующего хранилища. Реальный Authentik остается внешним.
 
 ```powershell
 dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-restore -o artifacts/publish
@@ -194,8 +251,8 @@ SQLite и `/data/keys`; каталог принадлежит непривиле
 останавливайте прежний экземпляр. Потеря key ring делает прежние cookie/tickets непригодными; восстановление требует
 нового входа. Текущий образ еще не содержит готовую медиаподсистему.
 
-Вспомогательный `docker compose up --build` использует тот же volume и переменные OIDC из окружения. Подключение
-настоящего MinIO/FFmpeg/yt-dlp описывается по мере реализации; автоматический деплой в pipeline не входит. CI отдельно
+Основной `docker compose up --build` использует тот же volume и переменные OIDC/S3 из окружения. Подключение
+FFmpeg/yt-dlp описывается по мере реализации; автоматический деплой в pipeline не входит. CI отдельно
 строит React/.NET, запускает unit и интеграционные тесты и проверяет оба publish; job docker строит AMD64/ARM64 и
 публикует GHCR только из основной ветки. CI не запускает production-приложение и smoke-тесты образов.
 
@@ -207,6 +264,11 @@ SQLite и `/data/keys`; каталог принадлежит непривиле
 административных API и прежнего парольного входа, SQLite/key ring в volume и сохранение ключей после замены контейнера.
 Закрытые ключи имеют mode 600 и принадлежат UID 1654. Результаты независимого ревью и проверок —
 в [журнале](openspec/review-log.md).
+
+На этапе S3 локально собран и запущен образ `linux/amd64` с отдельным готовым MinIO. Через настоящий Kestrel проверены
+multipart-отправка 34 MiB, анонимное потоковое скачивание с совпадающим SHA-256 и Content-Length, удаление с последующим
+`404`, сохранность внешнего объекта и очистка собственного временного файла. Для этой транспортной проверки сессия
+подготовлена через настоящий server ticket store; это не проверка входа в пользовательский Authentik.
 
 Реальный вход в пользовательский Authentik и запуск ARM64 требуют отдельного подходящего окружения. Пройденные
 изолированные OIDC-тесты не являются проверкой настройки конкретного сервера.

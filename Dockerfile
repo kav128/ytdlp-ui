@@ -18,7 +18,7 @@ RUN dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-restore -o /app/
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.12 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
-RUN mkdir -p /data/db /data/keys && chown -R "$APP_UID" /data
+RUN mkdir -p /data/db /data/keys /data/work && chown -R "$APP_UID" /data
 USER $APP_UID
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "Ytdlp.Ui.dll"]
