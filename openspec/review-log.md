@@ -664,13 +664,167 @@ Root сообщил успешный настоящий upgrade 6→7, перв�
 
 Независимая приемка этапа 7 завершена:48 UI и 19 целевых PG/MinIO проверок, Release, оба publish/SHA/deps и OpenSpec10/10 прошли. R12 исправлен с component и настоящим browser proof; открытых code findings нет. EN/RU desktop/mobile, live history/catalog и dark/base light стили проверены с явно указанным ограничением native light preference. Лог передан руководителю для финального Reformat и коммита; production runtime обеих архитектур и CI остаются этапу 8.
 
+## Этап 8. Production runtime, две архитектуры, CI и финальная сверка MVP
+
+Статус: этап 7 принят и закоммичен как `a8a8e8d`; независимый финальный host gate и отдельные настоящие AMD64/ARM64 runtime проверки этапа8 завершены и приняты руководителем. R13–R16 `fixed`; открытых обязательных замечаний нет. Ревьюер изменяет только этот журнал. Пользователь явно поручил завершить текущий этап, выполнить push и выключить ПК; эти действия выполняет root после заключительного Reformat документов и остановки собственных проверок/контейнеров.
+
+### Критерии приемки
+
+- Корневой multi-stage Dockerfile содержит готовые React/.NET и исполняемые yt-dlp/FFmpeg/FFprobe/Node/EJS для целевых linux/amd64 и linux/arm64. Готовые архивы/wheels/binaries имеют проверяемые версии/checksums, пути/архитектуры согласованы; исходники MinIO и медиаинструментов не компилируются. Production dependencies не содержат test/ProcessFixture пакетов, frontend dev server и node_modules не попадают в runtime.
+- Образы действительно запускаются на обеих архитектурах, с явным указанием QEMU для ARM64 при эмуляции. Версии инструментов, реальный combined MP4 и separate DASH/copy fallback, PostgreSQL/S3 pipeline, подтвержденное A/V до1080, публичная потоковая отдача и own workspace cleanup проверяются запуском, а не только build. Один Buildx output содержит обе платформы; публикация GHCR в этой сессии не выполняется.
+- Приложение работает непривилегированным пользователем, его work/key ring сохраняются с корректными правами; замена контейнера сохраняет PostgreSQL/очередь/историю/ключи и ранее неотозванную cookie до абсолютного истечения. Отсутствующие внешние сервисы не заменяются SQLite/моками. Production не создает bucket/policy и не запускает новый Authentik.
+- Основной Compose использует внешние PostgreSQL/MinIO, локальные overrides поднимают отдельные готовые зависимости с health/lifecycle и сохраняемыми данными. Настройки OIDC/group/PG/S3/paths/reverse proxy переопределяются окружением без пересборки UI; sample values явно являются примерами, секреты не попадают в assets, image arguments или логи. В readme описаны HTTPS/trusted proxy, volumes, ограничения фактических зависимостей и команды запуска.
+- Минимальный health имеет явный контракт и не раскрывает секреты, строки подключения, версии/детали исключений; startup продолжает применять migrations/recovery до работы HTTP/worker. Health не выдается за проверку всех внешних сервисов, если реализован только liveness.
+- CI запускается для push/PR в master. Build job отдельно проверяет React/.NET, все автономные и реальные Testcontainers проверки и обе публикации с UI; отсутствие Docker дает ошибку, тесты не пропускаются. Docker job зависит от build, собирает linux/amd64,linux/arm64 и не запускает production app или smoke готовых образов.
+- GHCR image использует lowercase owner и metadata tags/OCI labels. Login/push доступны только push master; PR не входит в registry и не публикует. contents:read применяется к проверкам, packages:write находится только в publishing job; используются github.actor/GITHUB_TOKEN без нового PAT, deploy и Git tags не добавляются.
+- Календарный тег YYYY.M.D.run_number использует реальную дату коммита в Europe/Moscow. Проверка охватывает UTC время по обе стороны21:00 и противоположные исходные offset, а не только обычный текущий commit. SDK/global.json/CI/Docker и Node версии согласованы; REVIEW-FOLLOWUPS закрывается только с проверкой.
+- Финальный host gate после STOP/Rider: React build/все UI, Release, все автономные unit/component/process, HTTP/PostgreSQL и Storage/MinIO; оба publish с SHA текущего dist и чистыми deps; strict OpenSpec. Root отдельно проверяет build/run обеих платформ, Compose и runtime media, без подмены container build утверждением о запуске.
+- Итоговый gap audit сверяет все основные capability и примененные auth/file-upload/PG deltas с кодом и доказательствами этапов1–8, цельными сценарием/ссылками и README. Legacy JWT/password/sessionStorage/SQLite не остаются действующим контрактом после sync; исторические наблюдения сохранены как история. Не добавляются новые функции за рамками MVP. Реальный пользовательский Authentik и native light preference сохраняются явно непроверенными; change не архивируется, отдельный deploy не добавляется. Прежний запрет Git push заменен последним явным указанием пользователя; root выполняет commit/push/выключение после приемки.
+
+### Матрица финальной сверки
+
+| Область                       | Имеющиеся основания                                      | Что завершает этап8                                                                                       |
+|-------------------------------|----------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| OIDC/group/cookie/CSRF        | Этап2, сохраненные protocol/session/negative tests       | Полный финальный regression и актуальный нормативный sync; настоящий Authentik user остается ограничением |
+| Submission/dedupe/API/queue   | Этап4 PostgreSQL и R8, concurrency/restart proof         | Финальный regression в текущем runtime, отсутствие SQLite/демо fallback                                   |
+| Media/без shell/без transcode | Этап5, R9/R10 и реальные MP4/DASH/MKV overlays           | Те же инструменты в окончательном production image обеих архитектур                                       |
+| Recovery/retry/cancel/delete  | Этап6, fault/race/stop barrier и actual recreate         | Полная регрессия, сохранные volumes/PG/keys и truthful runtime docs                                       |
+| S3/library/manual uploads     | Этап3 и последующие guards/recovery, actual Kestrel34MiB | Финальные Storage проверки, реальная библиотека и передача файлов в обоих platform runs                   |
+| UI/history/ENRU/mobile/theme  | Этап7, R12 и реальный browser QA                         | Финальные UI/assets, честно сохраненное ограничение native light preference                               |
+| Structure/build/tests         | Этап1 и адаптация ProcessFixture/PG lifecycle            | Полный host gate и отсутствие test dependencies в publish/runtime                                         |
+| Container/config/CI           | Остались runtime/Compose/CI/calendar follow-up           | Source review, Buildx/runtime proof обеих архитектур и проверка московской границы даты                   |
+
+### Проверки и замечания
+
+Прочитаны container-delivery/application-build, media/submission/public-library, auth/PG deltas и текущие Dockerfile/Compose/CI/конфигурация. Baseline отсутствие media runtime в Docker и календарный follow-up являлись запланированным объемом этапа8, а не новым finding против принятых этапов. При первичном чтении новых подтвержденных дефектов еще не было; последующие R13–R16 описаны ниже. Главный финальный барьер — подтвержденная поставка/запуск и отсутствие обязательных незавершенных сценариев.
+
+После root sync выполнена независимая сверка:9 основных capabilities,28 последних ADDED/MODIFIED requirement blocks совпадают с main после auth→PG при нормализации только whitespace;6 REMOVED legacy requirements отсутствуют. Первичная проверка ошибочно включила REMOVED blocks как ожидаемые и была исправлена до вывода результата; это не defect спецификаций. Purpose администратора, новая file-uploads, карты/AGENTS и прежние сценарии согласованы; SQLite/JWT/sessionStorage в main остались лишь в clean-PG/no-fallback/legacy-token negative контексте. Общее соответствие коду опирается на предыдущие этапы, финальную регрессию и отдельный runtime proof, а не на одну strict validation.
+
+### R13 — spool текущей публикации после аварийного завершения на Linux
+
+**Severity:** P1; статус `fixed`.
+
+**Доказательство:** S3StorageUpload создает `WorkDirectory/uploads/{PublicationId:N}/part` с FileMode.CreateNew и DeleteOnClose; этот путь находится вне `downloads/{job}/{generation}`, который очищает MediaPipeline.CancelAsync. AbortPublicationAsync на исходном срезе очищает только MPU в S3. В Linux .NET10 DeleteOnClose реализуется удалением имени в managed SafeFileHandle.ReleaseHandle, поэтому SIGKILL не гарантирует удаление spool; это подтверждено чтением [официального runtime10.0.12 source](https://raw.githubusercontent.com/dotnet/runtime/v10.0.12/src/libraries/System.Private.CoreLib/src/Microsoft/Win32/SafeHandles/SafeFileHandle.Unix.cs), строки114–125. Первоначально найдено чтением, собственный Linux kill repro на момент регистрации не запускался.
+
+**Воспроизведение для
+проверки:** после неудачного Uploading текущей сохраненной публикации оставить ее известный own `uploads/{pub}/part`, как после SIGKILL. Retry пытается открыть тот же CreateNew part и получает ошибку существующего файла; Dispose нового upload может убрать его, но первый повтор уже ошибочен. Отдельная ветка cancel не создает новый upload, очищает job workspace/S3 и может завершиться Canceled с сохранившимся собственным part. Предложен PG/MinIO controlled orphan-part regression и отдельное Linux подтверждение DeleteOnClose/SIGKILL.
+
+**Требуемое
+поведение:** перед повтором/при отмене согласовать и удалить только spool своей известной публикации, с проверкой пути/identity и сохранностью чужих uploads/parts. Не вводить глобальную уборку по возрасту или process/upload registry. Это завершение обязательного recovery/cancel контракта; сценарий HTTP manual upload после гибели всего процесса отдельно не расширяется новой инфраструктурой.
+
+**Ответ
+разработчика:** before-fix настоящий worker/PG/MinIO regression дал3/3 failures (`.tools/stage8-r13-before.log`): retry получил upload_failed, cancel и Complete reconciliation сохранили own directory. Добавлен общий CleanSpool для точного Guid операции: удалить только известный part и затем пустой каталог без recursive удаления, отклонять directory reparse points. Helper используется обычным Dispose и AbortPublication; совпавшая S3-публикация также выполняет AbortPublication до перехода в cleanup. Три regression cases сохраняют чужой/manual UUID spool и запрещают второй Complete в reconciliation.
+
+**Решение
+руководителя:** source evidence подтвержден, узкое исправление обязательно в этапе8. Проверка включает не только новую Write/cancel, но и совпавший S3 объект после Complete-before-save. Глобальные sweeps/registry не добавляются, live-I/O stop barrier сохраняется.
+
+**Проверка:** независимо выполнен actual Linux probe без host DLL/файлов репозитория. SDK10.0.403 container фактически содержит .NET10.0.14: normal Dispose удалил part, SIGKILL оставил1 byte. Отдельный exact production запуск helper в aspnet10.0.12 под UID1654, Ubuntu24.04.5 LTS/x86_64, подтвердил то же для Microsoft.NETCore.App/ASP.NETCore10.0.12. Helper собран внутри собственного временного volume, сеть отключена; оба контейнера --rm и volume удалены, `docker volume ls` по собственному prefix пуст. Первая попытка exact follow-up завершилась до runtime из-за CRLF последней строки stdin от PowerShell; transport исправлен, volume той попытки также удален. После STOP/Rider независимый полный Storage70/70 прошел, все три application retry/cancel/complete cases успешно удаляют собственный spool и сохраняют чужой, reconciliation не повторяет Complete. Дальнейший R16 отдельно уточняет ошибку доступа и не отменяет доказанную обработку обычного orphan spool.
+
+### R14 — History выровнено влево вопреки положению действий карточки
+
+**Severity:** P2; статус `fixed`.
+
+**Доказательство:** основной web-interface требует действия карточки справа внизу без исключения для History. В app.css исходные строки532–534 задают `.history-button { margin-right: auto; }`, отделяя History влево от остальных command actions; root подтвердил это по stage7 browser screenshots. Ревьюер согласился с прямым прочтением контракта: History также является действием карточки.
+
+**Требуемое
+поведение:** все действия остаются справа внизу, включая History, при сохранной мобильной доступности и красной отмене. Достаточно убрать auto-margin; тест, зеркалящий одну CSS декларацию, не требуется.
+
+**Ответ
+разработчика:** удалено только правило `.history-button { margin-right: auto; }`; общий flex alignment карточки сохранен. Production UI проверяется финальным build/Vitest и настоящим браузером, без теста-копии CSS.
+
+**Решение
+руководителя:** узкое исправление согласовано до финального STOP8; root проверит actual browser screenshot/geometry в окончательном AMD64 образе.
+
+**Проверка:** независимый финальный UI build/Vitest48/48 прошел после исправления. Root проверил настоящий UI окончательного AMD64 образа85bd: desktop History gapRight18px/gapBottom14px, mobile390x844 gapRight14px/gapBottom17px, overflow карточки отсутствует. Оба screenshot прочитаны root: `artifacts/screenshots/stage8-final-desktop.jpg` и `stage8-final-mobile.jpg`. Temporary browser tab закрыт, viewport восстановлен, proxy и собственное окружение удалены.
+
+### R15 — readiness превышает заявленный deadline после остановки прогретой PostgreSQL
+
+**Severity:** P2; статус `fixed`.
+
+**Доказательство:** root actual AMD64 probe: при paused MinIO anonymous readiness дал503 за3.02s и восстановился до200; после20 auth/session GET подтверждены11 idle физических app connections в pg_stat_activity. При paused PostgreSQL anonymous liveness оставался200, но anonymous readiness не завершился более40s и был отменен вызывающим клиентом. Header Cookie/WebSession не использовались для health. Лог `.tools/stage8-amd64-health-diagnostic.log`; readme на тот момент обещал общий deadline3s. Это доказанный hang/превышение времени, не предполагаемый false-positive200.
+
+**Требуемое
+поведение:** реальный SQL probe и внешний ограниченный deadline возвращают generic503, сохраняя200 liveness; восстановление зависимости возвращает readiness200. Таймауты медиа/jobs не меняются. После deadline собственный scope/probe не удерживает HTTP response при disposal и не создается неограниченно по hanging probe на каждый ready запрос; достаточно простого локального single-flight/busy режима.
+
+**Ответ
+разработчика:** source анализ уточнил, что CanConnect уже выполнял SELECT1; дефект находился в синхронном cancel path Npgsql, способном пережить deadline. Реализован per-app singleton single-flight, own unpooled SQL connection с probe-only connect/command2s и CancellationTimeout=-1, независимый внешний WaitAsync3s. Scope/connection/CTS принадлежат probe до конца cleanup; busy дает503 без размножения работы. Добавлен controlled dependency, игнорирующий cancellation, с проверкой deadline/busy/liveness/recovery. Глобальные DB/S3/job timeouts сохранены.
+
+**Решение
+руководителя:** исправление обязательно до принятия8; полные уже выполняемые232/168/70 проверки сохраняют значение для неизмененных частей. После fix нужны Rider, Release, целевые health проверки и оба publish; окончательные образы/root actual pause проверяются заново.
+
+**Проверка:** после повторного Rider6 независимая fresh Release-сборка дала0 warnings/errors, целевые health13/13 прошли (`.tools/reviewer-results/stage8-r15-health-review.trx`). Root повторил actual AMD64 warm-pool probe: paused MinIO5033.02s, после12 idle физических app connections pausedPG5032.01s, anonymous live200, обе зависимости восстановились до readiness200. Ранняя гипотеза ревьюера «CanConnect без SQL/false200» снята; в R15 фиксировалось именно фактическое превышение времени. Предыдущий Pooling=false test не подменяет этот production warm-pool proof.
+
+### R16 — ошибка доступа к собственному каталогу принимается за его отсутствие
+
+**Severity:** P1; статус `fixed`.
+
+**Доказательство:** независимый bounded Linux probe вызвал настоящий WorkspaceStorage.Clean и internal CleanSpool из app assembly образа `152c69db12b061a7bea1048bc5b8c4aa370e8e91cc59a59068b0fda7f6f67262`, .NET10.0.12/Ubuntu24.04.5/UID1654. После chmod000 родителя generation Directory.Exists вернулfalse, WorkspaceStorage.Clean вернулsuccess; после восстановления mode собственный kept.bin остался. Аналогично chmod000 uploads parent привел к success CleanSpool с оставшимся part. Helper использовал собственный volume/контейнеры и immutable imageID, host DLL/репозиторий не изменялись; ресурсы удалены в finally.
+
+**Требуемое
+поведение:** отсутствие подтверждается только FileNotFound/DirectoryNotFound. Denied и другие IO ошибки пробрасываются в существующий failure pipeline: Failed/ResumeCleaningUp либо ResumeCanceling, без ложных Completed/Canceled. Reparse guards, точная namespace/identity, сохранность чужих ресурсов и idempotent реально отсутствующего каталога остаются. Sweeps/registry/перепроектирование не добавляются.
+
+**Ответ
+разработчика:** добавлен общий FileSystemEntry.GetAttributesIfPresent, который считает отсутствием только FileNotFoundException/DirectoryNotFoundException. Оба cleanup paths проверяют реальные attributes, сохраняют reparse guards и передают denied/IO в существующий failure pipeline. Обычный файл вместо ожидаемого UUID-каталога дает IOException и остается сохранным. Шесть автономных OwnedCleanupTests проверяют точное собственное удаление, повтор отсутствующего пути и сохранность неверного типа entry; sweeps/registry не добавлены.
+
+**Решение
+руководителя:** actual source probe подтверждает обязательную failure-safety семантику текущего этапа8. После fix нужен повтор exact Linux helper на окончательном immutable образе и целевые cleanup regressions; прочие неизмененные full suites без основания не повторяются.
+
+**Проверка:** после STOP и подтвержденного Rider6 ревьюер независимо выполнил свежую Release-сборку с0 warnings/errors, OwnedCleanupTests6/6 и целевые PostgreSQL/MinIO Storage5/5: CleanupFailureKeepsConfirmedPublicationAndRetryOnlyCleansOwnWorkspace, FailedCancellationRetriesOnlyCleanupAndThenNewGenerationDownloadsAgain и три KnownJobSpoolLeftByCrash. Затем exact Linux helper повторен на окончательном immutable AMD64 образе `85bd2874e3cc8f814abedb017e070534d6d93458e9495740f4fa5f5e1d0687f7`, .NET10.0.12/Ubuntu24.04.5/UID1654. При chmod000 обоих родителей Directory.Exists по-прежнему далfalse, но настоящий WorkspaceStorage.Clean и CleanSpool теперь бросили UnauthorizedAccessException. После восстановления mode kept.bin и part сохранились. Helper собран внутри собственного volume и использовал actual app assembly; host DLL/репозиторий не менялись, контейнеры и volume удалены в finally.
+
+### Независимый финальный gate
+
+Проверки выполнялись последовательно после STOP разработчика и подтвержденного Reformat через Rider MCP. Полные наборы выполнены после исходного Reformat34; после узких R15/R16 повторены fresh Release и проверки измененных путей. Неизмененные полные наборы не запускались заново без основания; оба publish относятся к окончательному коду после R16.
+
+| Проверка                                                 | Результат                                                                                                             |
+|----------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| React TypeScript/Vite build и Vitest после R14           | Успешно;48/48                                                                                                         |
+| Release solution, включая окончательный R16              | 0 предупреждений /0 ошибок                                                                                            |
+| Полный автономный unit/component/process без Docker      | 232/232; `stage8-components-review.trx`                                                                               |
+| Полный PostgreSQL non-Storage                            | 168/168; `stage8-postgresql-review.trx`                                                                               |
+| Полный PostgreSQL/MinIO Storage                          | 70/70; `stage8-storage-review.trx`, включая три R13 regression                                                        |
+| После R15: fresh Release и health                        | 13/13; `stage8-r15-health-review.trx`                                                                                 |
+| После R16: fresh Release и cleanup                       | 6/6 автономных и5/5 Storage; `stage8-r16-components-review.trx`, `stage8-r16-storage-review.trx`                      |
+| Оба окончательных publish (`--no-build`, `--no-restore`) | Успешно; все3 актуальных dist assets совпадают с wwwroot по SHA-256                                                   |
+| Production deps обоих publish                            | Npgsql присутствует; NUnit/NSubstitute/Mvc.Testing/Test.Sdk/Testcontainers/ProcessFixture/SQLite отсутствуют          |
+| Linux calendar boundary                                  | Все4 Bash/Git случая прошли: московская граница дня, эквивалентные инстанты с разными offsets                         |
+| Основные спеки и ссылки                                  | 9 capabilities;28 примененных blocks/6 удаленных legacy requirements сверены;51 локальная Markdown ссылка разрешается |
+| Strict OpenSpec / whitespace                             | 11/11; `git diff --check` exit0                                                                                       |
+
+Пропусков в исполняемых наборах нет. TRX находятся в игнорируемом `.tools/reviewer-results/`; оба окончательных publish — `.tools/reviewer-stage8-publish-no-build` и `.tools/reviewer-stage8-publish`. OpenSpec сообщает INFO о том, что ADDED file-upload requirements уже находятся в main после sync: это ожидаемое состояние активного синхронизированного change; архивация не выполнялась и не запрашивалась. Исходное синхронизированное состояние не подменяется фиктивным архивом.
+
+Source review CI подтвердил последовательность React/.NET/Testcontainers → `needs` Docker, обе платформы, отсутствие запуска production app/smoke в CI, lowercase GHCR owner, push/login только для push в master и packages:write только у publishing job. `format-local` с Europe/Moscow исправляет календарный follow-up; synthetic boundary проверен настоящим Bash/Git. Удаленная GitHub Actions/GHCR публикация в этих локальных проверках не запускалась.
+
+По окончании собственные Testcontainers отсутствуют, временные probe containers/volumes удалены; работающих процессов build/test/probe ревьюера нет. Последующие commit/push и выключение ПК выполняет руководитель после завершения своей runtime матрицы и заключительного Reformat документов.
+
+### Отдельная окончательная runtime матрица руководителя
+
+Buildx сформировал OCI index `e27e74f976be67b5bb843e1a9d520b8ec448ea2ff74fb4f8d59c078d32c2b029` с linux/amd64 и linux/arm64. Платформенные запускаемые образы закреплены по immutable imageID: AMD64 `85bd2874e3cc8f814abedb017e070534d6d93458e9495740f4fa5f5e1d0687f7`, ARM64 `ed6adab95be7449af382a10bca70771513a5561bebdb17e3b2e2d3b1692571d9`. Наличие двух manifest не подменяет проверки запуска.
+
+На окончательном AMD64 image root выполнил полный настоящий runtime probe: MP4/DASH/H264+Opus MKV достигли Completed через PostgreSQL worker с подтвержденными S3, корректным FFprobe audio/video и собственным cleanup; активная отмена завершилась Canceled и позволила следующему queued заданию начать работу. SIGKILL/recreate сохранил cookie, jobID и историю, прерванное задание потребовало ручного retry; own DELETE202 закончился404 content, повтор Deleted создал новую публикацию. Проверены нативные инструменты/архитектура и UID1654, live200, paused MinIO readiness503 за2.99s и pausedPG после14 idle app connections503 за2s, восстановление обоих до200. Browser proof R14 относится к тому же image. Сессия подготовлена через настоящий ITicketStore для тестового setup, это не настоящий Authentik user login. Собственные4 контейнера,2 volumes, network, proxy и testcookie config удалены.
+
+На окончательном ARM64 image под QEMU root подтвердил нативные arm64 Node24.19.0/yt-dlp2026.10.26/EJS0.8.0/FFmpeg+FFprobe6.1.1 и UID1654. Настоящий MP4 прошел весь pipeline, public download и FFprobe180p. SIGKILL/recreate того же immutable image успешно запустился за72.61s: прерванное задание стало Failed только для ручного повтора, queued next продолжилось; retry сохранил cookie/ID/history. Own DELETE202 дал404, следующий retry создал новую публикацию с3 attempts и недоступным старым URL, собственный work пуст. Paused MinIO дал readiness503 за3.05s и восстановился до200; после17 idle физических PostgreSQL connections pausedPG дал503 за2.07s, live200 и readiness200 после восстановления. Итоговый probe exit0, лог `.tools/stage8-arm64-final-runtime.log`.
+
+ARM64 DASH/MKV и active cancel отдельно успешно прошли в предыдущем реальном QEMU probe; R15/R16 затронули только health/cleanup, а окончательный pinned run дополнительно проверил эти измененные пути и crash/retry/delete. Один ранний recreate завершился startup timeout при смене tag во время проверки; он не записывается как успех и не подменяет поздний положительный повтор с immutable imageID, собственным marker и диагностическими startup logs. Физическое ARM64 оборудование недоступно: доказан реальный ARM64 runtime под QEMU, а не аппаратная производительность. После обоих platform probes root удалил свои контейнеры/volumes/network и Buildx builder; временные browser tab/proxy/viewport/config также очищены.
+
+### Повторная проверка после заключительного Reformat
+
+После root Reformat40 (`isError=false`) hash-сверка выявила изменение раскладки двух C# файлов: MediaPipeline.cs и Storage/Tools/FaultingS3Client.cs. Независимое чтение и `git diff -w` подтвердили только уже принятые семантические изменения этапа8: AbortPublication перед успешным S3 reconciliation в R13 и list counters/controlled storage failures для health. Новых логических отклонений от R13/R16 не обнаружено; остальные runtime/config/build/TS исходники по root hash-сверке не менялись.
+
+Ревьюер заново выполнил Release solution:0 warnings/errors; затем те же5 настоящих PostgreSQL/MinIO cleanup/recovery cases прошли5/5 без пропусков (`.tools/reviewer-results/stage8-final-format-storage-review.trx`). Обе публикации повторены после этой сборки: все3 актуальных dist assets совпадают по SHA-256, Npgsql присутствует, test/ProcessFixture/SQLite dependencies отсутствуют. UI build и неизмененные полные наборы не повторялись без основания. Проверка оставшихся Testcontainers и собственных probe volumes дала пустой список; все процессы повторного gate завершены. Последующая правка документов пройдет только markdown Reformat с уже отформатированным Program.cs anchor.
+
+### Итог этапа
+
+Этап8 и итоговая сверка MVP приняты руководителем. Независимые host regression/build/publish и отдельные настоящие platform runtime проверки завершены; R13–R16 `fixed`. Во всем журнале остается одно согласованное ограничение R7 `accepted`: отсутствует обещание atomic delete против внешней замены того же ключа на legacy MinIO; неизменяемые собственные publication keys и guards проверены. Открытых обязательных code findings нет, новые функции/этапы не добавлялись.
+
+Проверки настоящего пользовательского входа в существующий Authentik и native light preference не выполнялись; OIDC проверен настоящим middleware против управляемого issuer, светлые стили — визуально через test-only proxy с отключением dark media, без изменения production CSS. ARM64 проверен под QEMU, физическое оборудование не использовалось. Удаленная GitHub Actions/GHCR публикация еще не запускалась локальными проверками; source CI и локальная матрица подтверждены. Эти границы явно сохранены в фактах приемки и не выдаются за выполненные проверки.
+
+Ревьюер завершил все проверки, удалил собственные временные ресурсы и остановил работу с журналом: STOP. Финальный Rider Reformat, commit/push и выключение ПК выполняет root по прямому указанию пользователя; результаты этих последующих действий в эту приемку заранее не записываются.
+
 ## Исходные вопросы для последующих этапов
 
 - Исторический вопрос этапов4–5 о первичном own DELETE решен в этапе6: queued202 с pending StartedAt=null, общий worker и минимальный честный UI; внешний файл без job остается HTTP. Сеть не помещается в длинную транзакцию БД; проверки очереди, intent-before-I/O и согласования успеха пройдены.
 - Исторический source-level вопрос этапа5 о неподтвержденной остановке принят в этапе6 через typed failure/stop barrier. Контролируемые user/host/DB-fail случаи и настоящий timeout callback I/O пройдены без cleanup/next claim; обычный настоящий tree-kill также остается зеленым. Это не было ретроспективным blocker этапа5 и не обещает безопасный restart одного WebHost при оставшихся потомках в прежней namespace.
-- Календарный Docker-тег: в исходной `.github/workflows/ci.yml` используется `--date=format`, поэтому `TZ=Europe/Moscow`
-  не обеспечивает преобразование даты коммита. Указание уже есть в `REVIEW-FOLLOWUPS.md`; проверить исправление на этапе
-  CI/поставки с коммитом около московской границы дня. Это не блокер этапа 1 при отсутствии изменения логики тегов.
-- После этапа 7 еще остаются production runtime yt-dlp/FFmpeg обеих архитектур, CI и финальная синхронизация спецификаций.
-  Это запланированная работа следующих этапов; прежняя приемка адаптации тестовой структуры не означала готовности этих
-  возможностей. OIDC/cookie приняты в этапе 2, S3/ручные файлы — в этапе 3, PostgreSQL и сохраняемые API/очередь — в этапе 4, worker/media pipeline — в этапе 5, reliability матрица — в этапе6, полный UI — в этапе7 с указанными ограничениями окружения.
+- Исторический календарный follow-up исходного `--date=format` закрыт в этапе8: `format-local` с Europe/Moscow проверен четырьмя настоящими Linux Bash/Git boundary cases. Исходное замечание не было ретроспективным blocker этапа1.
+- Запланированные после этапа7 production runtime обеих архитектур, CI и финальная синхронизация спецификаций завершены в этапе8 с приведенными выше доказательствами и ограничениями среды. OIDC/cookie приняты в этапе2, S3/ручные файлы — в этапе3, PostgreSQL и сохраняемые API/очередь — в этапе4, worker/media pipeline — в этапе5, reliability матрица — в этапе6, полный UI — в этапе7. Прежняя приемка отдельных этапов не подменяла эту итоговую проверку.
+
+После завершения приемки пользователь обновил версии пакетов в Directory.Packages.props и прямо указал включить их в коммит без проверки. Сборка, тесты, publish и runtime-доказательства выше относятся к состоянию до этого обновления; новые версии пакетов повторно не проверялись.

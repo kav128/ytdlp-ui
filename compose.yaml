@@ -12,6 +12,7 @@ services:
       Oidc__AdminGroup: ${OIDC_ADMIN_GROUP:-ytdlp-ui-admins}
       Paths__DataProtectionKeysDirectory: /data/keys
       Paths__WorkDirectory: /data/work
+      Worker__Enabled: ${WORKER_ENABLED:-true}
       S3__Endpoint: ${S3_ENDPOINT:-http://minio:9000}
       S3__Region: ${S3_REGION:-us-east-1}
       S3__Bucket: ${S3_BUCKET:-ytdlp-ui}

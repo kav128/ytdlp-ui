@@ -6,17 +6,17 @@
 - При проектировании учитывай [технический проект](openspec/design.md). Не считай предложения, технические defaults и открытые вопросы согласованными требованиями.
 - Фактический статус, API, команды сборки, тестирования и развертывания смотри в [readme.md](readme.md).
 
-| Область                                     | Спецификация                                                                                                |
-|---------------------------------------------|-------------------------------------------------------------------------------------------------------------|
-| Доступ и сессии администратора              | [administrator-access](openspec/specs/administrator-access/spec.md)                                         |
-| Создание загрузок и дубликаты               | [download-submission](openspec/specs/download-submission/spec.md)                                           |
-| Очередь, этапы и восстановление             | [download-lifecycle](openspec/specs/download-lifecycle/spec.md)                                             |
-| Получение и подготовка медиа                | [media-processing](openspec/specs/media-processing/spec.md)                                                 |
-| Каталог, скачивание и удаление файлов       | [public-library](openspec/specs/public-library/spec.md)                                                     |
-| Отправка локальных файлов                   | [file-uploads — активный delta](openspec/changes/authentik-sso-and-file-uploads/specs/file-uploads/spec.md) |
-| Интерфейс и локализация                     | [web-interface](openspec/specs/web-interface/spec.md)                                                       |
-| Структура, сборка и тестовая инфраструктура | [application-build](openspec/specs/application-build/spec.md)                                               |
-| Контейнер, конфигурация и CI                | [container-delivery](openspec/specs/container-delivery/spec.md)                                             |
+| Область                                     | Спецификация                                                        |
+|---------------------------------------------|---------------------------------------------------------------------|
+| Доступ и сессии администратора              | [administrator-access](openspec/specs/administrator-access/spec.md) |
+| Создание загрузок и дубликаты               | [download-submission](openspec/specs/download-submission/spec.md)   |
+| Очередь, этапы и восстановление             | [download-lifecycle](openspec/specs/download-lifecycle/spec.md)     |
+| Получение и подготовка медиа                | [media-processing](openspec/specs/media-processing/spec.md)         |
+| Каталог, скачивание и удаление файлов       | [public-library](openspec/specs/public-library/spec.md)             |
+| Отправка локальных файлов                   | [file-uploads](openspec/specs/file-uploads/spec.md)                 |
+| Интерфейс и локализация                     | [web-interface](openspec/specs/web-interface/spec.md)               |
+| Структура, сборка и тестовая инфраструктура | [application-build](openspec/specs/application-build/spec.md)       |
+| Контейнер, конфигурация и CI                | [container-delivery](openspec/specs/container-delivery/spec.md)     |
 
 ## Работа над изменениями
 

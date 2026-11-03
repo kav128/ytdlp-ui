@@ -16,6 +16,26 @@ public sealed class S3LibraryStorage(
 {
     private readonly string _bucket = options.Value.Bucket;
 
+    public async Task CheckReadyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await client.ListObjectsV2Async(
+                new ListObjectsV2Request
+                {
+                    BucketName = _bucket,
+                    MaxKeys = 1
+                },
+                cancellationToken
+            );
+        }
+        catch (Exception error) when (IsStorageError(error)
+                                   || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            throw new StorageUnavailableException(error);
+        }
+    }
+
     public async Task<LibraryFile[]> ListAsync(CancellationToken cancellationToken)
     {
         try
@@ -215,6 +235,8 @@ public sealed class S3LibraryStorage(
         {
             throw new StorageUnavailableException(error);
         }
+
+        S3StorageUpload.CleanSpool(paths.Value.WorkDirectory, publicationId);
     }
 
     public async Task DeleteAsync(StoredObject file, CancellationToken cancellationToken)

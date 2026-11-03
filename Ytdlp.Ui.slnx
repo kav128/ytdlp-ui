@@ -7,6 +7,11 @@
         <File Path=".github/workflows/ci.yml" />
         <File Path="readme.md" />
     </Folder>
+    <Folder Name="/build/">
+        <File Path="build/media-requirements.txt" />
+        <File Path="build/calendar-version.sh" />
+        <File Path="build/test-calendar-version.sh" />
+    </Folder>
     <Folder Name="/src/">
         <File Path="src/Directory.Build.props" />
         <Project Path="src/Ytdlp.Ui/Ytdlp.Ui.csproj" />

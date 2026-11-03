@@ -17,6 +17,7 @@ public sealed record PublicationUpload(Guid DownloadId, Guid PublicationId, stri
 
 public interface ILibraryStorage
 {
+    Task CheckReadyAsync(CancellationToken cancellationToken);
     Task<LibraryFile[]> ListAsync(CancellationToken cancellationToken);
     Task<StoredObject?> FindAsync(string key, CancellationToken cancellationToken);
     Task<StorageContent?> OpenAsync(string key, CancellationToken cancellationToken);

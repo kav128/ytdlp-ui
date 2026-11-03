@@ -29,6 +29,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         Database = database ?? new TestDatabase();
         _configure = configure;
         Storage.ListAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(Array.Empty<LibraryFile>()));
+        Storage.CheckReadyAsync(Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
     }
 
     public HttpClient CreateBrowserClient() => CreateClient(

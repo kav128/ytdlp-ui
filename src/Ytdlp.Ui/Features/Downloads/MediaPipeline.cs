@@ -590,6 +590,13 @@ public sealed class MediaPipeline(
                 {
                     if (!Matches(observed, prior)) throw new StorageConflictException();
 
+                    await storage.AbortPublicationAsync(
+                        work.DownloadId,
+                        work.PublicationId,
+                        prior.ObjectKey,
+                        cancellationToken
+                    );
+
                     return true;
                 }
 

@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Ytdlp.Ui.Configuration;
 using Ytdlp.Ui.Domain.Primitives;
 using Ytdlp.Ui.Features.Downloads;
 using Ytdlp.Ui.Features.Library;
@@ -15,6 +17,57 @@ namespace Ytdlp.Ui.IntegrationTests.Storage;
 
 public sealed partial class MediaWorkerTests
 {
+    [TestCase("retry")]
+    [TestCase("cancel")]
+    [TestCase("complete")]
+    public async Task KnownJobSpoolLeftByCrashIsRemovedWithoutTouchingOtherOperations(string action)
+    {
+        _tools.PayloadLength = 11 * 1024 * 1024;
+        await OidcBrowser.SignInAsync(Factory, Client);
+
+        if (action == "complete")
+        {
+            using var scope = Factory.Services.CreateScope();
+
+            await DatabaseFailures.InstallAtStateAsync(
+                scope.ServiceProvider.GetRequiredService<AppDbContext>(),
+                DownloadState.CleaningUp
+            );
+        }
+        else _faults.Fault = "upload_error";
+
+        var original = await CreateAsync("https://example.test/crash-spool");
+        await WaitForAsync(original.Id, "Failed");
+        _faults.Fault = null;
+
+        if (action == "complete")
+        {
+            using var scope = Factory.Services.CreateScope();
+            await DatabaseFailures.RemoveAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>(), "Downloads");
+        }
+
+        var workRoot = Factory.Services.GetRequiredService<IOptions<PathsOptions>>().Value.WorkDirectory;
+        var ownDirectory = Path.Combine(workRoot, "uploads", original.PublicationId.ToString("N"));
+        var foreignDirectory = Path.Combine(workRoot, "uploads", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(ownDirectory);
+        Directory.CreateDirectory(foreignDirectory);
+        await File.WriteAllTextAsync(Path.Combine(ownDirectory, "part"), "own orphan part");
+        var foreign = Path.Combine(foreignDirectory, "part");
+        await File.WriteAllTextAsync(foreign, "another manual operation");
+        var completes = _faults.CompletedCalls;
+
+        using var accepted = await Client.PostAsync(
+                                 $"/api/downloads/{original.Id}/{(action == "cancel" ? "cancel" : "retry")}",
+                                 null
+                             );
+
+        Assert.That(accepted.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        await WaitForAsync(original.Id, action == "cancel" ? "Canceled" : "Completed");
+        Assert.That(Directory.Exists(ownDirectory), Is.False);
+        Assert.That(await File.ReadAllTextAsync(foreign), Is.EqualTo("another manual operation"));
+        if (action == "complete") Assert.That(_faults.CompletedCalls, Is.EqualTo(completes));
+    }
+
     [Test]
     public async Task ContinuationReasonSurvivesARealLaterFailureWithoutReplacingEitherFailureHistory()
     {

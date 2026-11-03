@@ -1,4 +1,5 @@
 using Ytdlp.Ui.Features.Hello;
+using Ytdlp.Ui.Features.Health;
 using Ytdlp.Ui.Features.Auth;
 using Ytdlp.Ui.Features.Downloads;
 using Ytdlp.Ui.Features.Library;
@@ -51,6 +52,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddAppDatabase(builder.Configuration);
 builder.Services.AddAdminAuthentication(builder.Configuration);
 builder.Services.AddLibraryStorage(builder.Configuration);
+builder.Services.AddSingleton<ReadinessProbe>();
 builder.Services.AddScoped<DownloadQueries>();
 builder.Services.AddScoped<DownloadCommands>();
 builder.Services.AddScoped<DownloadQueue>();
@@ -69,6 +71,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapHelloEndpoints();
+app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapDownloadEndpoints();
 app.MapLibraryEndpoints();
@@ -78,6 +81,7 @@ app.MapFallbackToFile("index.html");
 await using (var scope = app.Services.CreateAsyncScope())
 {
     await scope.ServiceProvider.GetRequiredService<AppDbContext>().InitializeAsync();
+    HealthEndpoints.InitializePaths(scope.ServiceProvider.GetRequiredService<IOptions<PathsOptions>>().Value);
     await scope.ServiceProvider.GetRequiredService<StartupRecovery>().RecoverAsync();
 }
 

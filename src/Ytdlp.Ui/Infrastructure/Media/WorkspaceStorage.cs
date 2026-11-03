@@ -42,7 +42,12 @@ public class WorkspaceStorage(IOptions<PathsOptions> options)
     {
         var directory = DirectoryFor(downloadId, generation);
 
-        if (!Directory.Exists(directory)) return;
+        var attributes = FileSystemEntry.GetAttributesIfPresent(directory);
+
+        if (attributes is null) return;
+
+        if ((attributes.Value & FileAttributes.Directory) == 0)
+            throw new IOException("Workspace is not a directory.");
 
         CheckTree(directory);
         // The absolute target was checked against its configured root and generation above.
@@ -55,8 +60,8 @@ public class WorkspaceStorage(IOptions<PathsOptions> options)
 
         while (current.Length >= _root.Length)
         {
-            if ((File.Exists(current) || Directory.Exists(current))
-             && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+            if (FileSystemEntry.GetAttributesIfPresent(current) is { } attributes
+             && (attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Workspace links are not allowed.");
 
             current = Path.GetDirectoryName(current) ?? "";

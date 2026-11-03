@@ -529,10 +529,6 @@ details p {
     padding-inline: 11px;
 }
 
-.history-button {
-    margin-right: auto;
-}
-
 .library-panel {
     overflow: hidden;
     border-radius: 24px;

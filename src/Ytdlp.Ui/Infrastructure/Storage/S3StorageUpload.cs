@@ -17,6 +17,7 @@ internal sealed class S3StorageUpload : IStorageUpload
     private readonly Func<string, CancellationToken, Task>? _recordUploadId;
     private readonly string _key;
     private readonly string _directory;
+    private readonly string _workDirectory;
     private readonly long _partSize;
     private readonly List<PartETag> _parts = [];
     private string? _uploadId;
@@ -43,6 +44,7 @@ internal sealed class S3StorageUpload : IStorageUpload
         _logger = logger;
         _publication = publication;
         _recordUploadId = recordUploadId;
+        _workDirectory = workDirectory;
         _operation = publication?.PublicationId.ToString("N") ?? Guid.NewGuid().ToString("N");
         _key = publication?.ObjectKey ?? $"uploads/{_operation}/{name}";
 
@@ -63,6 +65,36 @@ internal sealed class S3StorageUpload : IStorageUpload
                                                                            _maximumPartSize
                                                                        )
                                                                        : _maximumPartSize;
+
+    internal static void CleanSpool(string workDirectory, Guid operation)
+    {
+        if (operation == Guid.Empty) throw new InvalidDataException("Upload operation identity is required.");
+
+        var root = Path.GetFullPath(workDirectory);
+        var uploads = Path.Combine(root, "uploads");
+        var directory = Path.Combine(uploads, operation.ToString("N"));
+
+        foreach (var path in new[]
+                 {
+                     root,
+                     uploads,
+                     directory
+                 })
+            if (FileSystemEntry.GetAttributesIfPresent(path) is { } attributes
+             && (attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Upload spool links are not allowed.");
+
+        var directoryAttributes = FileSystemEntry.GetAttributesIfPresent(directory);
+
+        if (directoryAttributes is null) return;
+
+        if ((directoryAttributes.Value & FileAttributes.Directory) == 0)
+            throw new IOException("Upload spool is not a directory.");
+
+        // Only the generated operation's known part is removed; unexpected siblings are preserved.
+        File.Delete(Path.Combine(directory, "part"));
+        Directory.Delete(directory, recursive: false);
+    }
 
     public async Task WriteAsync(Stream input, CancellationToken cancellationToken)
     {
@@ -304,6 +336,6 @@ internal sealed class S3StorageUpload : IStorageUpload
             }
         }
 
-        if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+        CleanSpool(_workDirectory, Guid.ParseExact(_operation, "N"));
     }
 }

@@ -20,6 +20,25 @@ public sealed class FaultingS3Client(string endpoint) : AmazonS3Client(
     public int CompletedCalls { get; private set; }
     public int UploadedParts { get; private set; }
     public int DeleteCalls { get; private set; }
+    public int ListCalls { get; private set; }
+    public int? LastListLimit { get; private set; }
+
+    public override Task<ListObjectsV2Response> ListObjectsV2Async(
+        ListObjectsV2Request request,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ListCalls++;
+        LastListLimit = request.MaxKeys;
+
+        if (Fault == "forbidden")
+            throw new AmazonS3Exception("Injected private endpoint") { StatusCode = HttpStatusCode.Forbidden };
+
+        if (Fault == "network") throw new HttpRequestException("Injected private endpoint");
+        if (Fault == "timeout") throw new TaskCanceledException("Injected private timeout");
+
+        return base.ListObjectsV2Async(request, cancellationToken);
+    }
 
     public override async Task<InitiateMultipartUploadResponse> InitiateMultipartUploadAsync(
         InitiateMultipartUploadRequest request,
