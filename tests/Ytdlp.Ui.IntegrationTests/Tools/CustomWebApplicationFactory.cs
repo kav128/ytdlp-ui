@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -19,20 +18,15 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     public FakeOidcProvider Provider { get; } = new();
     public ILibraryStorage Storage { get; } = Substitute.For<ILibraryStorage>();
-    private readonly string? _directory;
+    private readonly bool _ownsDatabase;
     private HttpClient? _backchannel;
-    private readonly string _databasePath;
+    public TestDatabase Database { get; }
     private readonly Action<IWebHostBuilder>? _configure;
 
-    public CustomWebApplicationFactory(string? databasePath = null, Action<IWebHostBuilder>? configure = null)
+    public CustomWebApplicationFactory(TestDatabase? database = null, Action<IWebHostBuilder>? configure = null)
     {
-        if (databasePath is null)
-        {
-            _directory = Path.Combine(SetupGlobal.DirectoryPath, Guid.NewGuid().ToString("N"));
-            databasePath = Path.Combine(_directory, "db", "app.db");
-        }
-
-        _databasePath = databasePath;
+        _ownsDatabase = database is null;
+        Database = database ?? new TestDatabase();
         _configure = configure;
         Storage.ListAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(Array.Empty<LibraryFile>()));
     }
@@ -52,7 +46,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.UseSetting(
             "ConnectionStrings:AppDatabase",
-            new SqliteConnectionStringBuilder { DataSource = _databasePath }.ToString()
+            Database.ConnectionString
         );
 
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
@@ -64,9 +58,9 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                                                   ["Oidc:GroupsClaim"] = "groups",
                                                   ["Oidc:AdminGroup"] = "admins",
                                                   ["Paths:WorkDirectory"] =
-                                                      Path.Combine(Path.GetDirectoryName(_databasePath)!, "work"),
+                                                      Path.Combine(Database.DirectoryPath, "work"),
                                                   ["Paths:DataProtectionKeysDirectory"] = Path.Combine(
-                                                      Path.GetDirectoryName(_databasePath)!,
+                                                      Database.DirectoryPath,
                                                       "keys"
                                                   )
                                               }
@@ -107,18 +101,6 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             Provider.Dispose();
         }
 
-        if (disposing && _directory is not null && Directory.Exists(_directory))
-        {
-            var root = Path.GetFullPath(SetupGlobal.DirectoryPath) + Path.DirectorySeparatorChar;
-
-            if (!Path.GetFullPath(_directory)
-                     .StartsWith(
-                          root,
-                          OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal
-                      ))
-                throw new InvalidOperationException("Test cleanup path is outside the suite directory.");
-
-            Directory.Delete(_directory, recursive: true);
-        }
+        if (disposing && _ownsDatabase) Database.Dispose();
     }
 }

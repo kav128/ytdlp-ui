@@ -1,6 +1,8 @@
 using Ytdlp.Ui.Domain;
 using Ytdlp.Ui.Domain.Primitives;
 using Ytdlp.Ui.Domain.ValueObjects;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Ytdlp.Ui.Infrastructure.Persistence.Entities;
 
@@ -9,6 +11,7 @@ public sealed class DownloadRecord
     public Guid Id { get; set; }
     public string OriginalUrl { get; set; } = null!;
     public string NormalizedUrl { get; set; } = null!;
+    public byte[] NormalizedUrlHash { get; set; } = [];
     public string? Title { get; set; }
     public Guid CurrentAttemptId { get; set; }
     public Guid PublicationId { get; set; }
@@ -26,11 +29,20 @@ public sealed class DownloadRecord
     public DateTimeOffset UpdatedAt { get; set; }
     public long Version { get; set; }
 
-    public static DownloadRecord Create(Download download, string originalUrl, string normalizedUrl,
-        Guid workspaceGeneration, DateTimeOffset createdAt)
+    public static byte[] ComputeNormalizedUrlHash(string normalizedUrl) =>
+        SHA256.HashData(Encoding.UTF8.GetBytes(normalizedUrl));
+
+    public static DownloadRecord Create(
+        Download download,
+        string originalUrl,
+        string normalizedUrl,
+        Guid workspaceGeneration,
+        DateTimeOffset createdAt
+    )
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(originalUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(normalizedUrl);
+
         if (workspaceGeneration == Guid.Empty)
             throw new ArgumentException("Workspace generation must be non-empty.", nameof(workspaceGeneration));
 
@@ -42,13 +54,26 @@ public sealed class DownloadRecord
             WorkspaceGeneration = workspaceGeneration,
             CreatedAt = createdAt
         };
+
         record.Capture(download, DownloadIntent.EnqueueAttempt, createdAt);
+
         return record;
     }
 
-    public Download RestoreAggregate() => Download.Restore(new DownloadSnapshot(
-        Id, CurrentAttemptId, PublicationId, State, AttemptStatus, ResumeState, FailedState,
-        PublicationState, CancelRequested, ErrorCode is null ? null : new DownloadFailure(ErrorCode, ErrorDetails)));
+    public Download RestoreAggregate() => Download.Restore(
+        new DownloadSnapshot(
+            Id,
+            CurrentAttemptId,
+            PublicationId,
+            State,
+            AttemptStatus,
+            ResumeState,
+            FailedState,
+            PublicationState,
+            CancelRequested,
+            ErrorCode is null ? null : new DownloadFailure(ErrorCode, ErrorDetails)
+        )
+    );
 
     public void Capture(Download download, DownloadIntent intent, DateTimeOffset updatedAt)
     {

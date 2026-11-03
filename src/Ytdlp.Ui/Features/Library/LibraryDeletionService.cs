@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Ytdlp.Ui.Domain.Events;
 using Ytdlp.Ui.Domain.Primitives;
 using Ytdlp.Ui.Domain.ValueObjects;
@@ -84,7 +85,11 @@ public sealed class LibraryDeletionService(AppDbContext database, ILibraryStorag
         {
             await database.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException error) when (error is DbUpdateConcurrencyException
+                                           || error.InnerException is PostgresException
+                                              {
+                                                  SqlState: PostgresErrorCodes.UniqueViolation
+                                              })
         {
             throw new StorageConflictException();
         }

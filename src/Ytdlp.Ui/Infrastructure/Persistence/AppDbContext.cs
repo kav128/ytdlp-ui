@@ -116,14 +116,22 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             {
                 builder.ToTable(
                     "Downloads",
-                    table => table.HasCheckConstraint("CK_Downloads_Version", "\"Version\" >= 1")
+                    table =>
+                    {
+                        table.HasCheckConstraint("CK_Downloads_Version", "\"Version\" >= 1");
+
+                        table.HasCheckConstraint(
+                            "CK_Downloads_UrlHashLength",
+                            "octet_length(\"NormalizedUrlHash\") = 32"
+                        );
+                    }
                 );
 
                 builder.HasKey(record => record.Id);
                 builder.Property(record => record.Id).ValueGeneratedNever();
                 builder.Property(record => record.OriginalUrl).IsRequired();
                 builder.Property(record => record.NormalizedUrl).IsRequired();
-                builder.HasIndex(record => record.NormalizedUrl).IsUnique();
+                builder.HasIndex(record => record.NormalizedUrlHash).IsUnique();
                 builder.Property(record => record.State).HasConversion<string>();
                 builder.Property(record => record.AttemptStatus).HasConversion<string>();
                 builder.Property(record => record.ResumeState).HasConversion<string>();
@@ -253,38 +261,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                        .OnDelete(DeleteBehavior.Restrict);
             }
         );
-
-        foreach (var property in modelBuilder.Model.GetEntityTypes().SelectMany(entity => entity.GetProperties()))
-        {
-            if (property.ClrType == typeof(DateTimeOffset) || property.ClrType == typeof(DateTimeOffset?))
-            {
-                property.SetValueConverter(UnixMillisecondsConverter.Instance);
-                property.SetColumnType("INTEGER");
-            }
-        }
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        var connection = Database.GetDbConnection();
-        Directory.CreateDirectory(Path.GetDirectoryName(connection.DataSource)!);
-        await Database.OpenConnectionAsync(cancellationToken);
-
-        try
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA journal_mode = WAL;";
-            var mode = await command.ExecuteScalarAsync(cancellationToken);
-
-            if (!string.Equals(mode?.ToString(), "wal", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("SQLite WAL mode could not be enabled.");
-
-            await Database.MigrateAsync(cancellationToken);
-        }
-        finally
-        {
-            await Database.CloseConnectionAsync();
-        }
+        await Database.MigrateAsync(cancellationToken);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -306,8 +287,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     private void PrepareVersions()
     {
+        foreach (var entry in ChangeTracker.Entries()
+                                           .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+        foreach (var property in entry.Properties)
+            if (property.CurrentValue is DateTimeOffset value && value.Offset != TimeSpan.Zero)
+                property.CurrentValue = value.ToUniversalTime();
+
         foreach (var entry in ChangeTracker.Entries<DownloadRecord>())
         {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+                entry.Entity.NormalizedUrlHash = DownloadRecord.ComputeNormalizedUrlHash(entry.Entity.NormalizedUrl);
+
             if (entry.State == EntityState.Added)
                 entry.Entity.Version = 1;
             else if (entry.State == EntityState.Modified)

@@ -50,6 +50,16 @@ afterEach(() => {
 });
 
 describe('library and SSO workspace', () => {
+    it('preserves the original URL input while validating its trimmed form', async () => {
+        const create = vi.spyOn(api, 'create').mockResolvedValue(download);
+        render(<App/>);
+        fireEvent.click(await screen.findByRole('button', {name: messages.newDownload}));
+        const original = '  HTTPS://EXAMPLE.test:443/Case?b=2&a=1  ';
+        const input = screen.getByRole('textbox', {name: messages.url});
+        fireEvent.change(input, {target: {value: original}});
+        fireEvent.submit(input.closest('form')!);
+        await waitFor(() => expect(create).toHaveBeenCalledWith(original, 'csrf-token'));
+    });
     it('publishes a file once and reloads the public catalog after confirmation', async () => {
         const complete = deferred<{
             id: string;

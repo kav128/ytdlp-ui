@@ -8,7 +8,7 @@ using Ytdlp.Ui.Infrastructure.Persistence;
 
 namespace Ytdlp.Ui.Infrastructure.Authentication;
 
-public sealed class SqliteTicketStore(
+public sealed class DatabaseTicketStore(
     IServiceScopeFactory scopes,
     IDataProtectionProvider protection,
     TimeProvider clock

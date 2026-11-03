@@ -54,7 +54,7 @@ public class AntiforgeryTests : SetupBase
         using var scope = Factory.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<Ytdlp.Ui.Infrastructure.Persistence.AppDbContext>();
         var record = database.AdminSessions.Single();
-        var store = scope.ServiceProvider.GetRequiredService<SqliteTicketStore>();
+        var store = scope.ServiceProvider.GetRequiredService<DatabaseTicketStore>();
         var ticket = (await store.RetrieveAsync(record.Id))!;
         var identity = (ClaimsIdentity)ticket.Principal.Identity!;
         foreach (var claim in identity.FindAll(ClaimTypes.Role).ToArray()) identity.RemoveClaim(claim);

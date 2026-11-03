@@ -12,7 +12,7 @@ using Ytdlp.Ui.IntegrationTests.Tools;
 namespace Ytdlp.Ui.IntegrationTests.Authentication;
 
 [TestFixture]
-[Category("SQLite")]
+[Category("PostgreSQL")]
 public class ServerSessionTests : SetupBase
 {
     private FakeTimeProvider _clock = null!;

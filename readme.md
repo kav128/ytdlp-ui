@@ -5,7 +5,7 @@ MVP находятся в [OpenSpec](openspec/README.md), согласованн
 в [активном change](openspec/changes/authentik-sso-and-file-uploads/proposal.md).
 
 Реализован вход через Authentik по OIDC, административный доступ по группе, сохраняемые серверные cookie-сессии и
-CSRF-защита команд. SQLite создается и мигрирует до приема запросов; сессии, их истечение и отзыв сохраняются при
+CSRF-защита команд. PostgreSQL мигрирует до приема запросов; сессии, их истечение и отзыв сохраняются при
 перезапуске с прежними БД и ключами Data Protection.
 
 Библиотека читает все объекты настроенного S3 bucket, включая внешние файлы и все страницы listing. Администратор может
@@ -13,8 +13,10 @@ CSRF-защита команд. SQLite создается и мигрирует 
 ключи. Удаление внешних объектов и собственных сохраненных публикаций работает синхронно, с проверкой состояния
 агрегата и сохранением истории. Очередь повторного удаления и восстановление после рестарта появятся на следующих этапах.
 
-API заданий пока демонстрационное: создание по URL, повтор и отмена сбрасываются при перезапуске. Постоянная схема
-заданий/истории существует, но подключение API к ней и реальные медиапроцессы выполняются в следующих этапах.
+API заданий сохраняет URL, попытки, этапы и команды в PostgreSQL; очередь переживает перезапуск. Конкурентные команды
+защищены уникальностью и Version, а claim обеспечивает одну исполняемую попытку. Worker пока не подключен: новые
+задания остаются Queued, отмена сохраняет Canceling/cleanup intent до подключения реальной обработки. Медиапроцессы и
+полное согласование после сбоев относятся к следующим этапам.
 Прогресс не симулируется. Интерфейс поддерживает телефон/десктоп, системную тему и EN/RU по браузеру.
 
 ## Структура
@@ -33,7 +35,7 @@ src/
   Ytdlp.Ui/
     Features/{Auth,Downloads,Library,Hello}/
     Domain/
-    Infrastructure/{Authentication,Persistence,Mocking}/
+    Infrastructure/{Authentication,Persistence,Storage}/
     Configuration/
   Ytdlp.Ui.Client/
     package.json
@@ -43,7 +45,7 @@ src/
 tests/
   Directory.Build.props
   Ytdlp.Ui.Tests/             # доменные unit-тесты
-  Ytdlp.Ui.IntegrationTests/  # HTTP, OIDC и файловая SQLite
+  Ytdlp.Ui.IntegrationTests/  # HTTP/OIDC/PostgreSQL и отдельный Storage namespace
     SetupBase.cs
     SetupGlobal.cs
     Tools/CustomWebApplicationFactory.cs
@@ -60,24 +62,24 @@ props импортирует родительский; solution содержит
 Scopes `openid` и `profile` должны возвращать `sub` и настроенный claim групп, в том числе через UserInfo. Участники
 выбранной группы получают административный доступ; остальные видят публичный каталог.
 
-| Параметр                             | Назначение                                                                                 |
-|--------------------------------------|--------------------------------------------------------------------------------------------|
-| `Oidc__Authority`                    | HTTPS issuer приложения, например `https://authentik.example.test/application/o/ytdlp-ui/` |
-| `Oidc__ClientId`                     | Идентификатор confidential client                                                          |
-| `Oidc__ClientSecret`                 | Секрет клиента только на бэкенде                                                           |
-| `Oidc__GroupsClaim`                  | Claim с группами, обычно `groups`                                                          |
-| `Oidc__AdminGroup`                   | Группа администраторов, например `ytdlp-ui-admins`                                         |
-| `ConnectionStrings__AppDatabase`     | Файловая SQLite; в контейнере `Data Source=/data/db/app.db`                                |
-| `Paths__DataProtectionKeysDirectory` | Постоянный каталог ключей; в контейнере `/data/keys`                                       |
-| `Paths__WorkDirectory`               | Временные файлы операций на volume `/data/work`; каталог доступен UID 1654                 |
-| `S3__Endpoint`                       | URL S3/MinIO, например `https://minio.example.test`                                        |
-| `S3__Region`                         | Регион подписи запросов, по умолчанию `us-east-1`                                          |
-| `S3__Bucket`                         | Существующий bucket, управляемый вне приложения                                            |
-| `S3__AccessKey`, `S3__SecretKey`     | Серверные учетные данные S3                                                                |
-| `S3__ForcePathStyle`                 | Адресация path style для MinIO, по умолчанию `true`                                        |
-| `ReverseProxy__KnownProxies__0`      | Доверенный IP reverse proxy; дополнительные адреса задаются индексами                      |
-| `ReverseProxy__KnownNetworks__0`     | Доверенная CIDR-сеть вместо отдельных адресов при необходимости                            |
-| `ReverseProxy__AllowedHosts__0`      | Разрешенный внешний host из X-Forwarded-Host                                               |
+| Параметр                             | Назначение                                                                                   |
+|--------------------------------------|----------------------------------------------------------------------------------------------|
+| `Oidc__Authority`                    | HTTPS issuer приложения, например `https://authentik.example.test/application/o/ytdlp-ui/`   |
+| `Oidc__ClientId`                     | Идентификатор confidential client                                                            |
+| `Oidc__ClientSecret`                 | Секрет клиента только на бэкенде                                                             |
+| `Oidc__GroupsClaim`                  | Claim с группами, обычно `groups`                                                            |
+| `Oidc__AdminGroup`                   | Группа администраторов, например `ytdlp-ui-admins`                                           |
+| `ConnectionStrings__AppDatabase`     | PostgreSQL, например `Host=db.example.test;Database=ytdlp_ui;Username=ytdlp_ui;Password=...` |
+| `Paths__DataProtectionKeysDirectory` | Постоянный каталог ключей; в контейнере `/data/keys`                                         |
+| `Paths__WorkDirectory`               | Временные файлы операций на volume `/data/work`; каталог доступен UID 1654                   |
+| `S3__Endpoint`                       | URL S3/MinIO, например `https://minio.example.test`                                          |
+| `S3__Region`                         | Регион подписи запросов, по умолчанию `us-east-1`                                            |
+| `S3__Bucket`                         | Существующий bucket, управляемый вне приложения                                              |
+| `S3__AccessKey`, `S3__SecretKey`     | Серверные учетные данные S3                                                                  |
+| `S3__ForcePathStyle`                 | Адресация path style для MinIO, по умолчанию `true`                                          |
+| `ReverseProxy__KnownProxies__0`      | Доверенный IP reverse proxy; дополнительные адреса задаются индексами                        |
+| `ReverseProxy__KnownNetworks__0`     | Доверенная CIDR-сеть вместо отдельных адресов при необходимости                              |
+| `ReverseProxy__AllowedHosts__0`      | Разрешенный внешний host из X-Forwarded-Host                                                 |
 
 Обязательные OIDC-поля проверяются при запуске; отсутствующая группа или секрет не включают локальную авторизацию.
 Демонстрационные значения `appsettings.json` следует заменить. `Admin`/`Jwt`, локальный пароль, собственные JWT и
@@ -119,7 +121,7 @@ build/publish без копирования в исходники. Совмес�
 Пример локальных путей после задания реальных OIDC-параметров в окружении:
 
 ```powershell
-$env:ConnectionStrings__AppDatabase = 'Data Source=' + (Join-Path (Get-Location) 'data/db/app.db')
+$env:ConnectionStrings__AppDatabase = 'Host=localhost;Port=15432;Database=ytdlp_ui;Username=ytdlp_ui;Password=...'
 $env:Paths__DataProtectionKeysDirectory = Join-Path (Get-Location) 'data/keys'
 $env:Paths__WorkDirectory = Join-Path (Get-Location) 'data/work'
 dotnet run --project src/Ytdlp.Ui -c Release --no-build
@@ -142,7 +144,7 @@ proxy к бэкенду на 5080; рекомендуемый SSO-сценари
 | `GET /api/library/{id}/content`   | Публичный                                                                         | Поток S3 с attachment, octet-stream, Content-Length и nosniff; `404` при подтвержденном отсутствии                              |
 | `DELETE /api/library/{id}`        | Администратор, cookie + CSRF                                                      | `204`, включая отсутствующий объект; `409 publication_changed` при конфликте состояния/публикации; `503 storage_unavailable`    |
 | `POST /api/library/uploads`       | Администратор, cookie + CSRF; multipart/form-data с единственной file-part `file` | `201` с `{ id, name, size, lastModified, contentUrl }` после проверки S3; `400 invalid_upload` или `503 storage_unavailable`    |
-| `GET /api/downloads`              | Администратор                                                                     | Массив демонстрационных заданий                                                                                                 |
+| `GET /api/downloads`              | Администратор                                                                     | Сохраняемые задания с попытками, этапами и allowedActions                                                                       |
 | `GET /api/downloads/{id}`         | Администратор                                                                     | Задание или `404`                                                                                                               |
 | `POST /api/downloads`             | Администратор, cookie + CSRF; `{ url }`                                           | `201` с Location; `202` для повтора удаленного результата; `400 invalid_url`, `409 download_already_exists`                     |
 | `POST /api/downloads/{id}/retry`  | Администратор, cookie + CSRF                                                      | `202`, новая попытка; `404` или `409 invalid_state`                                                                             |
@@ -154,10 +156,24 @@ proxy к бэкенду на 5080; рекомендуемый SSO-сценари
 ошибка — `500 application/problem+json` без текста исключения и секретов. Неизвестный `/api/*` возвращает `404` без
 React HTML; отсутствующий static asset — `404`, маршруты UI без расширения поддерживают SPA fallback.
 
-Состояние мокового задания:
+Состояние задания сохраняет прежние поля интерфейса:
 `{ id, url, title, state, resumeState, progress, createdAt, errorCode, error, allowedActions, attempts }`;
-`progress=null`, история `{ number, state, createdAt, error }`. Полная история этапов и работа worker еще не подключены
-к API.
+добавлены `currentAttemptId`, `publicationId`, `publicationState`, `failedState`, `cancelRequested`, `version`.
+Попытка содержит `{ number, state, createdAt, error, id, reason, status, initialState, startedAt, finishedAt, errorCode, stages }`;
+этап — `{ id, stage, status, startedAt, finishedAt, progress, errorCode, error, artifactId, reusedFromStageId }`.
+Прогресс берется только из фактической записи выполняемого этапа; до подключения worker он `null`.
+
+Исходный URL хранится точно как принят, отдельно от нормализованного. Удаляются только внешние пробелы, нормализуются
+scheme/host/default port; raw path, query/order и fragment сохраняются. Полный URL остается text; уникальный ключ —
+SHA-256 normalized UTF-8 из32bytes, вычисляемый persistence при каждой записи. После lookup сравнивается точная строка:
+теоретический hash conflict дает `409 url_conflict` без чужого ID. Дубликат дает `409 download_already_exists` и
+`existingDownloadId`. Для Deleted и подтвержденного S3-отсутствия Completed результатом становится новая попытка того
+же ID с новым publication/workspace UUID. Failed/Canceled требуют явного retry. Ответы201/202 включают Location.
+
+Queue claim сериализуется коротким PostgreSQL advisory transaction lock, проверяет отсутствие исполняемой попытки и
+выбирает FIFO по QueuedAt/Id; сеть/процессы внутри транзакции не выполняются. Optimistic Version и unique active-attempt
+откатывают устаревшие команды вместе с историей/intent. Отмена идемпотентна и не стирает cleanup intent. CleaningUp и
+retry очистки не допускают отмену. Реальное выполнение и restart recovery будут подключены следующими этапами.
 
 ## Потоковая библиотека и отправка файлов
 
@@ -201,15 +217,16 @@ npm --prefix src/Ytdlp.Ui.Client test
 ```
 
 Unit-тесты проверяют агрегат и переходы автомата без хоста и Docker. Интеграционные тесты используют настоящий
-TestServer и отдельную файловую SQLite с миграциями. `Tools/CustomWebApplicationFactory` настраивает Testing и временный
-key ring; `SetupBase` владеет фабрикой/клиентом одного сценария, `SetupGlobal` — временным каталогом набора.
-Startup/restart/options тесты владеют своими хостами; низкоуровневые ограничения SQLite проверяются отдельными
-контекстами.
+TestServer и настоящую PostgreSQL с миграциями. Root `SetupGlobal` владеет одним PostgreSQL Testcontainer и временным
+каталогом набора; `Tools/TestDatabase` — отдельной БД и файлами сценария. `CustomWebApplicationFactory` настраивает
+Testing и key ring, `SetupBase` владеет фабрикой/клиентом и ее БД. Startup/restart tests явно владеют общей БД и ключами.
+При недоступном Docker все интеграционные наборы завершаются ошибкой; unit по-прежнему не требуют Docker.
 
 Fake OIDC provider предоставляет discovery/JWKS, подписанный RSA ID token и UserInfo через backchannel настоящего
 OpenIdConnectHandler. Проверяются state/correlation/nonce, PKCE verifier, client/redirect, подпись/issuer/audience/срок,
 группы только в UserInfo и несовпадение sub. Также проверяются 12 часов без sliding, отзыв/restart, отказ БД, upgrade
-InitialPersistence без потери истории и CSRF всех команд. Тесты не обращаются к пользовательскому Authentik.
+чистая initial PostgreSQL migration без импорта старых tickets и CSRF всех команд. Тесты не обращаются к
+пользовательскому Authentik. Проверки прежнего SQLite-upgrade относятся к истории этапов1–3, а не к текущей миграции.
 
 Vitest проверяет SSO-навигацию, отсутствие парольной формы и browser tokens, общий CSRF-запрос, публичную библиотеку,
 `401`/сетевые ошибки, EN/RU и поздний успешный create из прежней сессии, который не должен закрывать новую URL-форму.
@@ -221,8 +238,10 @@ Vitest проверяет SSO-навигацию, отсутствие паро�
 `minio/minio:RELEASE.2025-04-22T22-12-26Z`: нужны `minio` в PATH и writable `/tmp/minio-data`. Иначе default image
 подтягивается из registry; закрепленные версии защищают воспроизводимость. Отдельный diagnostic test фиксирует
 поддержку/игнорирование If-Match, не обещая ее для старого MinIO.
-Отсутствие Docker — ошибка, а не skip. Прочие HTTP/OIDC/SQLite-тесты заменяют только внешний storage boundary и Docker не
-требуют.
+Отсутствие Docker — ошибка, а не skip. Прочие HTTP/OIDC/PostgreSQL-тесты заменяют только внешний storage boundary и
+не запускают MinIO; их PostgreSQL также требует Docker. Default PostgreSQL image — готовый `postgres:18.6-alpine`
+по digest `sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5`, с динамическим портом и удалением
+тестовых БД/контейнера после набора. Пользовательские БД и S3 bucket не используются.
 
 ## Публикация и контейнер
 
@@ -231,6 +250,12 @@ Vitest проверяет SSO-навигацию, отсутствие паро�
 сохраняет данные в отдельном volume; его штатный init создает `ytdlp-ui` и публичную download policy только в этом
 локальном opt-in варианте. Учетные данные задаются `LOCAL_MINIO_ROOT_USER`/`LOCAL_MINIO_ROOT_PASSWORD`; порты19000/19001.
 Приложение не создает bucket и не меняет настройки существующего хранилища. Реальный Authentik остается внешним.
+
+Для готового локального PostgreSQL добавьте `-f compose.postgresql.yaml`: например
+`docker compose -f compose.yaml -f compose.minio.yaml -f compose.postgresql.yaml up --build`. PostgreSQL18.6 закреплен
+по digest, порт15432, отдельный volume `/var/lib/postgresql` и пароль `LOCAL_POSTGRES_PASSWORD`; для основного внешнего
+сервера используется `APP_DATABASE_CONNECTION`. Секреты не коммитятся. Учетная запись приложения должна иметь права
+на миграции его схемы. Прежний SQLite volume можно сохранить как резервную копию; приложению нужны ключи и work.
 
 ```powershell
 dotnet publish src/Ytdlp.Ui/Ytdlp.Ui.csproj -c Release --no-restore -o artifacts/publish
@@ -246,8 +271,9 @@ docker build -t ytdlp-ui:local .
 docker run --rm -p 5080:8080 -v ytdlp-data:/data --env-file .env ytdlp-ui:local
 ```
 
-`.env` содержит реальные OIDC-параметры из таблицы выше; его нельзя коммитить с секретами. Volume `/data` сохраняет
-SQLite и `/data/keys`; каталог принадлежит непривилегированному пользователю образа. Для замены контейнера сначала
+`.env` содержит строку подключения PostgreSQL и OIDC/S3-параметры из таблицы выше; его нельзя коммитить с секретами. Volume `/data` сохраняет
+`/data/keys` и `/data/work`; каталог принадлежит непривилегированному пользователю образа. PostgreSQL — внешний сервис,
+его daemon не входит в приложение. Для замены контейнера сначала
 останавливайте прежний экземпляр. Потеря key ring делает прежние cookie/tickets непригодными; восстановление требует
 нового входа. Текущий образ еще не содержит готовую медиаподсистему.
 
@@ -256,11 +282,14 @@ FFmpeg/yt-dlp описывается по мере реализации; авт�
 строит React/.NET, запускает unit и интеграционные тесты и проверяет оба publish; job docker строит AMD64/ARM64 и
 публикует GHCR только из основной ветки. CI не запускает production-приложение и smoke-тесты образов.
 
-Новая миграция OidcSessions применяется автоматически при запуске, отзывает прежние локальные сессии и сохраняет
-задания/историю. Перед развертыванием делайте резервную копию SQLite. Для отката нужен прежний образ с соответствующей
-резервной копией БД; старые JWT/refresh не переносятся в OIDC-сессии.
+Переход на PostgreSQL выполняется с чистой БД по выбору пользователя: импорт истории и tickets SQLite не выполняется.
+Старые SQLite-файлы приложение не открывает и не удаляет; сохраните их отдельно для отката прежнего образа. Подготовьте
+PostgreSQL/учетную запись, задайте новую строку подключения: InitialPostgreSql применяется до приема запросов.
+Недоступная БД прерывает startup без локального fallback. Понадобится новый SSO-вход; S3-файлы остаются в библиотеке.
+Резервные копии актуальных данных делайте средствами PostgreSQL (`pg_dump`/`pg_restore`) вместе с ключами/рабочими
+файлами. Автоматического обратного импорта при откате и очистки S3 нет.
 
-Локально на этапе OIDC проверены сборка и запуск `linux/amd64`: UI/assets, публичная библиотека, закрытие
+История этапа OIDC: локально проверены сборка и запуск `linux/amd64`: UI/assets, публичная библиотека, закрытие
 административных API и прежнего парольного входа, SQLite/key ring в volume и сохранение ключей после замены контейнера.
 Закрытые ключи имеют mode 600 и принадлежат UID 1654. Результаты независимого ревью и проверок —
 в [журнале](openspec/review-log.md).
@@ -269,6 +298,15 @@ FFmpeg/yt-dlp описывается по мере реализации; авт�
 multipart-отправка 34 MiB, анонимное потоковое скачивание с совпадающим SHA-256 и Content-Length, удаление с последующим
 `404`, сохранность внешнего объекта и очистка собственного временного файла. Для этой транспортной проверки сессия
 подготовлена через настоящий server ticket store; это не проверка входа в пользовательский Authentik.
+
+На этапе PostgreSQL локальный `linux/amd64` запуск с отдельными PostgreSQL и MinIO подтвердил чистую миграцию,
+постановку в очередь и отклонение дубликата, сохранение задания/истории и cookie при замене приложения, а также отзыв
+сессии после следующего перезапуска. Публичный каталог доступен, история без входа возвращает `401`; контрольный прежний
+SQLite-файл остался неизменным. Сессия подготовлена через настоящий ticket store для транспортной проверки.
+
+Для подключения по паролю в окружении без Kerberos можно задать `GSS Encryption Mode=Disable` в строке подключения:
+это исключает попытку GSSAPI и сообщение об отсутствующей библиотеке; SSL/TLS настраивается отдельно.
+См. [описание Npgsql 10](https://www.npgsql.org/doc/release-notes/10.0.html).
 
 Реальный вход в пользовательский Authentik и запуск ARM64 требуют отдельного подходящего окружения. Пройденные
 изолированные OIDC-тесты не являются проверкой настройки конкретного сервера.

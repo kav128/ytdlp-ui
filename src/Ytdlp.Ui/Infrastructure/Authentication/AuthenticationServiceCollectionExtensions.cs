@@ -64,7 +64,7 @@ public static class AuthenticationServiceCollectionExtensions
                                                                        )
                  );
 
-        services.AddSingleton<SqliteTicketStore>();
+        services.AddSingleton<DatabaseTicketStore>();
 
         services.AddAntiforgery(options =>
             {
@@ -84,7 +84,7 @@ public static class AuthenticationServiceCollectionExtensions
                 .AddOpenIdConnect(OidcScheme, _ => { });
 
         services.AddOptions<CookieAuthenticationOptions>(CookieScheme)
-                .Configure<SqliteTicketStore, TimeProvider, IHostEnvironment>((options, store, clock, environment) =>
+                .Configure<DatabaseTicketStore, TimeProvider, IHostEnvironment>((options, store, clock, environment) =>
                      {
                          options.SessionStore = store;
                          options.TimeProvider = clock;

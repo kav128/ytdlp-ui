@@ -1,4 +1,5 @@
-using Microsoft.Data.Sqlite;
+using Npgsql;
+using Ytdlp.Ui.IntegrationTests.Tools;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
@@ -12,21 +13,19 @@ using Ytdlp.Ui.Infrastructure.Persistence.Entities;
 namespace Ytdlp.Ui.IntegrationTests.Persistence;
 
 [TestFixture]
-[Category("SQLite")]
+[Category("PostgreSQL")]
 public class AppDbContextTests
 {
     private static readonly DateTimeOffset _createdAt = new(2026, 10, 2, 10, 20, 30, 123, TimeSpan.FromHours(3));
-    private string _directory = null!;
-    private string _databasePath = null!;
+    private TestDatabase _database = null!;
     private ServiceProvider _provider = null!;
 
     [SetUp]
     public async Task SetUp()
     {
-        _directory = Path.Combine(SetupGlobal.DirectoryPath, Guid.NewGuid().ToString("N"));
-        _databasePath = Path.Combine(_directory, "db", "app.db");
+        _database = new TestDatabase();
         var services = new ServiceCollection();
-        services.AddAppDatabase(CreateConfiguration(Path.GetRelativePath(Environment.CurrentDirectory, _databasePath)));
+        services.AddAppDatabase(CreateConfiguration(_database.ConnectionString));
         _provider = services.BuildServiceProvider();
         await using var context = CreateContext();
         await context.InitializeAsync();
@@ -36,22 +35,16 @@ public class AppDbContextTests
     public void TearDown()
     {
         _provider?.Dispose();
-        var root = Path.GetFullPath(SetupGlobal.DirectoryPath) + Path.DirectorySeparatorChar;
-
-        if (!Path.GetFullPath(_directory).StartsWith(root, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Test cleanup path is outside the temporary test root.");
-
-        if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+        _database?.Dispose();
     }
 
     [Test]
     public async Task MigrationIsIdempotentAndMatchesTheCurrentModel()
     {
         await using var context = CreateContext();
-        Assert.That(File.Exists(_databasePath), Is.True);
         var migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.That(migrations, Has.Length.EqualTo(2));
-        Assert.That(migrations[0], Does.EndWith("_InitialPersistence"));
+        Assert.That(migrations, Has.Length.EqualTo(1));
+        Assert.That(migrations[0], Does.EndWith("_InitialPostgreSql"));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
         Assert.That(context.Database.HasPendingModelChanges(), Is.False);
         await context.InitializeAsync();
@@ -59,14 +52,13 @@ public class AppDbContextTests
     }
 
     [Test]
-    public async Task EveryConnectionEnablesForeignKeysAndAFiniteBusyTimeout()
+    public async Task EveryConnectionUsesTheConfiguredPostgreSqlDatabaseAndUtc()
     {
         for (var index = 0; index < 2; index++)
         {
             await using var context = CreateContext();
-            Assert.That(await ScalarAsync(context, "PRAGMA foreign_keys;"), Is.EqualTo(1L));
-            Assert.That(await ScalarAsync(context, "PRAGMA busy_timeout;"), Is.EqualTo(5000L));
-            Assert.That(await ScalarAsync(context, "PRAGMA journal_mode;"), Is.EqualTo("wal"));
+            Assert.That(await ScalarAsync(context, "SELECT current_database();"), Is.EqualTo(_database.Name));
+            Assert.That(await ScalarAsync(context, "SHOW TimeZone;"), Is.AnyOf("UTC", "Etc/UTC"));
         }
     }
 
@@ -116,29 +108,14 @@ public class AppDbContextTests
     }
 
     [Test]
-    public async Task UpgradeRevokesOldSessionsWithoutLosingDownloadHistory()
+    public async Task ApplyingInitialMigrationAgainKeepsExistingDownloadHistory()
     {
-        var services = new ServiceCollection();
-        services.AddAppDatabase(CreateConfiguration(Path.Combine(_directory, "upgrade.db")));
-        await using var provider = services.BuildServiceProvider();
-        await using var scope = provider.CreateAsyncScope();
-        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var migrator = context.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
-        await migrator.MigrateAsync("20261002192408_InitialPersistence");
+        await using var context = CreateContext();
         var download = await AddDownloadAsync(context);
-
-        await context.Database.ExecuteSqlRawAsync(
-            "INSERT INTO AdminSessions (Id, IssuedAt, ExpiresAt, RefreshTokenHash) VALUES ('old-session', 1, 9999999999999, X'010203');"
-        );
-
-        await context.Database.MigrateAsync();
-        Assert.That(await context.Downloads.CountAsync(), Is.EqualTo(1));
+        await context.InitializeAsync();
         Assert.That((await context.Downloads.SingleAsync()).Id, Is.EqualTo(download.Id));
         Assert.That(await context.Attempts.CountAsync(), Is.EqualTo(1));
-        var legacy = await context.AdminSessions.SingleAsync();
-        Assert.That(legacy.Id, Is.EqualTo("old-session"));
-        Assert.That(legacy.RevokedAt, Is.Not.Null);
-        Assert.That(legacy.ProtectedTicket, Is.Null);
+        Assert.That(await context.AdminSessions.CountAsync(), Is.Zero);
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
     }
 
@@ -321,13 +298,13 @@ public class AppDbContextTests
         Assert.That(session.RevokedAt, Is.EqualTo(_createdAt.AddHours(1)));
 
         Assert.That(
-            await ScalarAsync(reopened, "SELECT typeof(CreatedAt) FROM Downloads LIMIT 1;"),
-            Is.EqualTo("integer")
+            await ScalarAsync(reopened, "SELECT pg_typeof(\"CreatedAt\")::text FROM \"Downloads\" LIMIT 1;"),
+            Is.EqualTo("timestamp with time zone")
         );
 
         Assert.That(
-            await ScalarAsync(reopened, "SELECT typeof(QueuedAt) FROM DownloadAttempts LIMIT 1;"),
-            Is.EqualTo("integer")
+            await ScalarAsync(reopened, "SELECT pg_typeof(\"QueuedAt\")::text FROM \"DownloadAttempts\" LIMIT 1;"),
+            Is.EqualTo("timestamp with time zone")
         );
     }
 
@@ -341,6 +318,30 @@ public class AppDbContextTests
         var duplicate = NewDownload("https://EXAMPLE.com/video", first.NormalizedUrl);
         context.Downloads.Add(duplicate);
         await AssertConstraintViolation(() => context.SaveChangesAsync());
+    }
+
+    [Test]
+    public async Task PersistenceOwnsUrlHashAndRecomputesItForAllSaveMethods()
+    {
+        await using var context = CreateContext();
+        var record = NewDownload();
+        record.NormalizedUrlHash = [1, 2, 3];
+        context.Downloads.Add(record);
+        context.SaveChanges();
+
+        Assert.That(
+            record.NormalizedUrlHash,
+            Is.EqualTo(DownloadRecord.ComputeNormalizedUrlHash(record.NormalizedUrl))
+        );
+
+        record.NormalizedUrl = "https://example.test/changed";
+        record.NormalizedUrlHash = new byte[32];
+        await context.SaveChangesAsync();
+        await using var reopened = CreateContext();
+        var saved = await reopened.Downloads.SingleAsync();
+        Assert.That(saved.NormalizedUrlHash, Is.EqualTo(DownloadRecord.ComputeNormalizedUrlHash(saved.NormalizedUrl)));
+        Assert.That(saved.NormalizedUrlHash, Has.Length.EqualTo(32));
+        Assert.That(saved.CreatedAt.Offset, Is.EqualTo(TimeSpan.Zero));
     }
 
     [Test]
@@ -367,9 +368,9 @@ public class AppDbContextTests
                                                          return true;
                                                      }
                                                      catch (DbUpdateException error) when
-                                                         (error.InnerException is SqliteException
+                                                         (error.InnerException is PostgresException
                                                           {
-                                                              SqliteErrorCode: 19
+                                                              SqlState: PostgresErrorCodes.UniqueViolation
                                                           })
                                                      {
                                                          return false;
@@ -439,9 +440,9 @@ public class AppDbContextTests
                                                          return true;
                                                      }
                                                      catch (DbUpdateException error) when
-                                                         (error.InnerException is SqliteException
+                                                         (error.InnerException is PostgresException
                                                           {
-                                                              SqliteErrorCode: 19
+                                                              SqlState: PostgresErrorCodes.UniqueViolation
                                                           })
                                                      {
                                                          return false;
@@ -743,28 +744,28 @@ public class AppDbContextTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public async Task RegistrationUsesTheConfiguredDatabasePath(bool relative)
+    public async Task RegistrationUsesTheConfiguredPostgreSqlDatabase(bool pooling)
     {
-        var path = Path.Combine(_directory, "configured", "app.db");
-        var configuredPath = relative ? Path.GetRelativePath(Environment.CurrentDirectory, path) : path;
-        var configuration = CreateConfiguration(configuredPath);
+        var connection = new NpgsqlConnectionStringBuilder(_database.ConnectionString) { Pooling = pooling };
         var services = new ServiceCollection();
-        services.AddAppDatabase(configuration);
+        services.AddAppDatabase(CreateConfiguration(connection.ToString()));
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await context.InitializeAsync();
-        Assert.That(File.Exists(path), Is.True);
+        Assert.That(await ScalarAsync(context, "SELECT current_database();"), Is.EqualTo(_database.Name));
+        using var pooled = new NpgsqlConnection(connection.ToString());
+        NpgsqlConnection.ClearPool(pooled);
     }
 
     private AppDbContext CreateContext() => new(_provider.GetRequiredService<DbContextOptions<AppDbContext>>());
 
-    private static IConfiguration CreateConfiguration(string path) =>
+    private static IConfiguration CreateConfiguration(string connectionString) =>
         new ConfigurationBuilder().AddInMemoryCollection(
                                        new Dictionary<string, string?>
                                        {
                                            ["ConnectionStrings:AppDatabase"] =
-                                               new SqliteConnectionStringBuilder { DataSource = path }.ToString()
+                                               connectionString
                                        }
                                    )
                                   .Build();
@@ -810,8 +811,8 @@ public class AppDbContextTests
     private static async Task AssertConstraintViolation(Func<Task<int>> action)
     {
         var error = await Assert.ThrowsAsync<DbUpdateException>(() => action());
-        Assert.That(error!.InnerException, Is.TypeOf<SqliteException>());
-        Assert.That(((SqliteException)error.InnerException!).SqliteErrorCode, Is.EqualTo(19));
+        Assert.That(error!.InnerException, Is.TypeOf<PostgresException>());
+        Assert.That(((PostgresException)error.InnerException!).SqlState, Does.StartWith("23"));
     }
 
     private static async Task<object?> ScalarAsync(AppDbContext context, string sql)

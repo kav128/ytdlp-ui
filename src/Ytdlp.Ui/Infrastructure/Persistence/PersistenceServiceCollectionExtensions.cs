@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+using Npgsql;
 using Microsoft.EntityFrameworkCore;
 
 namespace Ytdlp.Ui.Infrastructure.Persistence;
@@ -10,22 +10,34 @@ public static class PersistenceServiceCollectionExtensions
     public static IServiceCollection AddAppDatabase(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddDbContext<AppDbContext>(builder =>
-        {
-            var connectionString = configuration.GetConnectionString(_connectionStringName);
-            if (string.IsNullOrWhiteSpace(connectionString))
-                throw new InvalidOperationException($"ConnectionStrings:{_connectionStringName} is required.");
+            {
+                var connectionString = configuration.GetConnectionString(_connectionStringName);
 
-            var connection = new SqliteConnectionStringBuilder(connectionString);
-            if (string.IsNullOrWhiteSpace(connection.DataSource) || connection.DataSource == ":memory:" ||
-                connection.Mode == SqliteOpenMode.Memory)
-                throw new InvalidOperationException("SQLite requires a persistent database file.");
+                if (string.IsNullOrWhiteSpace(connectionString))
+                    throw new InvalidOperationException($"ConnectionStrings:{_connectionStringName} is required.");
 
-            connection.DataSource = Path.GetFullPath(connection.DataSource);
-            connection.ForeignKeys = true;
-            connection.DefaultTimeout = 5;
-            connection.Pooling = false;
-            builder.UseSqlite(connection.ToString()).AddInterceptors(SqliteConnectionInterceptor.Instance);
-        });
+                NpgsqlConnectionStringBuilder connection;
+
+                try
+                {
+                    connection = new NpgsqlConnectionStringBuilder(connectionString);
+                }
+                catch (ArgumentException)
+                {
+                    throw new InvalidOperationException(
+                        "ConnectionStrings:AppDatabase must be a PostgreSQL connection string."
+                    );
+                }
+
+                if (string.IsNullOrWhiteSpace(connection.Host)
+                 || string.IsNullOrWhiteSpace(connection.Database)
+                 || string.IsNullOrWhiteSpace(connection.Username))
+                    throw new InvalidOperationException("PostgreSQL host, database and username are required.");
+
+                builder.UseNpgsql(connection.ToString());
+            }
+        );
+
         return services;
     }
 }

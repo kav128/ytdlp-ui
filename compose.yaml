@@ -4,6 +4,7 @@ services:
     ports:
       - "5080:8080"
     environment:
+      ConnectionStrings__AppDatabase: ${APP_DATABASE_CONNECTION:-Host=postgres;Database=ytdlp_ui;Username=ytdlp_ui;Password=replace-with-postgresql-password}
       Oidc__Authority: ${OIDC_AUTHORITY:-https://authentik.example.test/application/o/ytdlp-ui/}
       Oidc__ClientId: ${OIDC_CLIENT_ID:-ytdlp-ui}
       Oidc__ClientSecret: ${OIDC_CLIENT_SECRET:-replace-with-authentik-client-secret}

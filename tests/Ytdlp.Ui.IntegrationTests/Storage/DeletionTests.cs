@@ -201,10 +201,12 @@ public sealed class DeletionTests : SetupBase
         await OidcBrowser.SignInAsync(Factory, Client);
 
         using (var scope = Factory.Services.CreateScope())
-            await scope.ServiceProvider.GetRequiredService<AppDbContext>()
-                       .Database.ExecuteSqlRawAsync(
-                            "CREATE TRIGGER reject_deleted BEFORE UPDATE ON Downloads WHEN NEW.State = 'Deleted' BEGIN SELECT RAISE(ABORT, 'test failure'); END;"
-                        );
+            await DatabaseFailures.InstallAsync(
+                scope.ServiceProvider.GetRequiredService<AppDbContext>(),
+                "Downloads",
+                "UPDATE",
+                onlyDeleted: true
+            );
 
         using var response = await DeleteAsync();
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.InternalServerError));

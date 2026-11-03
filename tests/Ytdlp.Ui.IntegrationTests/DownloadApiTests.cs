@@ -3,7 +3,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Ytdlp.Ui.Infrastructure.Mocking;
+using Ytdlp.Ui.Features.Downloads;
+using Ytdlp.Ui.IntegrationTests.Data;
+using Ytdlp.Ui.Domain.Primitives;
 using Ytdlp.Ui.Features.Library;
 using Ytdlp.Ui.Infrastructure.Storage;
 using NSubstitute;
@@ -11,7 +13,7 @@ using NSubstitute;
 namespace Ytdlp.Ui.IntegrationTests;
 
 [TestFixture]
-public class DemoApiTests : SetupBase
+public class DownloadApiTests : SetupBase
 {
     [Test]
     public async Task PublicLibraryAndContentAreAvailableWithoutLogin()
@@ -122,7 +124,7 @@ public class DemoApiTests : SetupBase
                 )
             );
 
-            var downloads = await Client.GetFromJsonAsync<DemoDownload[]>("/api/downloads");
+            var downloads = await Client.GetFromJsonAsync<DownloadView[]>("/api/downloads");
             Assert.That(downloads!.Count(download => download.Url == "https://example.com/new-video"), Is.EqualTo(1));
         }
         finally
@@ -146,15 +148,16 @@ public class DemoApiTests : SetupBase
     [Test]
     public async Task CleanupCannotBeCanceledBeforeOrAfterRetry()
     {
+        await DownloadData.SeedAsync(Factory.Services, DownloadState.Failed, DownloadState.CleaningUp);
         await Login();
-        var downloads = await Client.GetFromJsonAsync<DemoDownload[]>("/api/downloads");
+        var downloads = await Client.GetFromJsonAsync<DownloadView[]>("/api/downloads");
         var cleanup = downloads!.Single(download => download.ResumeState == "CleaningUp");
         Assert.That(cleanup.AllowedActions, Does.Not.Contain("cancel"));
         using var cancel = await Client.PostAsync($"/api/downloads/{cleanup.Id}/cancel", null);
         Assert.That(cancel.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
         using var retry = await Client.PostAsync($"/api/downloads/{cleanup.Id}/retry", null);
         Assert.That(retry.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
-        var queued = await retry.Content.ReadFromJsonAsync<DemoDownload>();
+        var queued = await retry.Content.ReadFromJsonAsync<DownloadView>();
         Assert.That(queued!.AllowedActions, Does.Not.Contain("cancel"));
         using var cancelQueued = await Client.PostAsync($"/api/downloads/{cleanup.Id}/cancel", null);
         Assert.That(cancelQueued.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
@@ -164,29 +167,30 @@ public class DemoApiTests : SetupBase
     public async Task DeletingAnExternalFileDoesNotChangeDownloadHistory()
     {
         await Login();
-        var downloads = await Client.GetFromJsonAsync<DemoDownload[]>("/api/downloads");
+        var downloads = await Client.GetFromJsonAsync<DownloadView[]>("/api/downloads");
         var id = LibraryFile.Create("external/test.bin", 0, DateTimeOffset.UtcNow).Id;
         using var deletion = await Client.DeleteAsync($"/api/library/{id}");
         Assert.That(deletion.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
         using var content = await Client.GetAsync($"/api/library/{id}/content");
         Assert.That(content.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
-        var after = await Client.GetFromJsonAsync<DemoDownload[]>("/api/downloads");
+        var after = await Client.GetFromJsonAsync<DownloadView[]>("/api/downloads");
         Assert.That(JsonSerializer.Serialize(after), Is.EqualTo(JsonSerializer.Serialize(downloads)));
     }
 
     [Test]
     public async Task CancelingFailedDownloadKeepsTheFailedAttempt()
     {
+        await DownloadData.SeedAsync(Factory.Services, DownloadState.Failed, DownloadState.Uploading);
         await Login();
-        var downloads = await Client.GetFromJsonAsync<DemoDownload[]>("/api/downloads");
+        var downloads = await Client.GetFromJsonAsync<DownloadView[]>("/api/downloads");
         var failed = downloads!.Single(download => download.ResumeState == "Uploading");
         using var response = await Client.PostAsync($"/api/downloads/{failed.Id}/cancel", null);
-        var canceled = await response.Content.ReadFromJsonAsync<DemoDownload>();
-        Assert.That(canceled!.State, Is.EqualTo("Canceled"));
+        var canceled = await response.Content.ReadFromJsonAsync<DownloadView>();
+        Assert.That(canceled!.State, Is.EqualTo("Canceling"));
         Assert.That(canceled.Attempts, Has.Length.EqualTo(2));
         Assert.That(canceled.Attempts[0].State, Is.EqualTo("Failed"));
         Assert.That(canceled.Attempts[0].Error, Is.Not.Null);
-        Assert.That(canceled.Attempts[1].State, Is.EqualTo("Canceled"));
+        Assert.That(canceled.Attempts[1].State, Is.EqualTo("Canceling"));
     }
 
     private Task<string> Login() => OidcBrowser.SignInAsync(Factory, Client);

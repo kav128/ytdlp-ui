@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialPersistence : Migration
+    public partial class InitialPostgreSql : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -15,11 +15,13 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 name: "AdminSessions",
                 columns: table => new
                 {
-                    Id = table.Column<string>(type: "TEXT", nullable: false),
-                    IssuedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    ExpiresAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    RevokedAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    RefreshTokenHash = table.Column<byte[]>(type: "BLOB", nullable: true)
+                    Id = table.Column<string>(type: "text", nullable: false),
+                    IssuedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    ExpiresAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    RevokedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    Issuer = table.Column<string>(type: "text", nullable: true),
+                    Subject = table.Column<string>(type: "text", nullable: true),
+                    ProtectedTicket = table.Column<byte[]>(type: "bytea", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -31,29 +33,31 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 name: "Downloads",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    OriginalUrl = table.Column<string>(type: "TEXT", nullable: false),
-                    NormalizedUrl = table.Column<string>(type: "TEXT", nullable: false),
-                    Title = table.Column<string>(type: "TEXT", nullable: true),
-                    CurrentAttemptId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    PublicationId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    WorkspaceGeneration = table.Column<Guid>(type: "TEXT", nullable: false),
-                    State = table.Column<string>(type: "TEXT", nullable: false),
-                    AttemptStatus = table.Column<string>(type: "TEXT", nullable: false),
-                    ResumeState = table.Column<string>(type: "TEXT", nullable: true),
-                    FailedState = table.Column<string>(type: "TEXT", nullable: true),
-                    PublicationState = table.Column<string>(type: "TEXT", nullable: false),
-                    CancelRequested = table.Column<bool>(type: "INTEGER", nullable: false),
-                    Intent = table.Column<string>(type: "TEXT", nullable: false),
-                    ErrorCode = table.Column<string>(type: "TEXT", nullable: true),
-                    ErrorDetails = table.Column<string>(type: "TEXT", nullable: true),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    UpdatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    Version = table.Column<long>(type: "INTEGER", nullable: false)
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    OriginalUrl = table.Column<string>(type: "text", nullable: false),
+                    NormalizedUrl = table.Column<string>(type: "text", nullable: false),
+                    NormalizedUrlHash = table.Column<byte[]>(type: "bytea", nullable: false),
+                    Title = table.Column<string>(type: "text", nullable: true),
+                    CurrentAttemptId = table.Column<Guid>(type: "uuid", nullable: false),
+                    PublicationId = table.Column<Guid>(type: "uuid", nullable: false),
+                    WorkspaceGeneration = table.Column<Guid>(type: "uuid", nullable: false),
+                    State = table.Column<string>(type: "text", nullable: false),
+                    AttemptStatus = table.Column<string>(type: "text", nullable: false),
+                    ResumeState = table.Column<string>(type: "text", nullable: true),
+                    FailedState = table.Column<string>(type: "text", nullable: true),
+                    PublicationState = table.Column<string>(type: "text", nullable: false),
+                    CancelRequested = table.Column<bool>(type: "boolean", nullable: false),
+                    Intent = table.Column<string>(type: "text", nullable: false),
+                    ErrorCode = table.Column<string>(type: "text", nullable: true),
+                    ErrorDetails = table.Column<string>(type: "text", nullable: true),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    Version = table.Column<long>(type: "bigint", nullable: false)
                 },
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_Downloads", x => x.Id);
+                    table.CheckConstraint("CK_Downloads_UrlHashLength", "octet_length(\"NormalizedUrlHash\") = 32");
                     table.CheckConstraint("CK_Downloads_Version", "\"Version\" >= 1");
                 });
 
@@ -61,14 +65,14 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 name: "DownloadArtifacts",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    DownloadId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    WorkspaceGeneration = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Kind = table.Column<string>(type: "TEXT", nullable: false),
-                    RelativePath = table.Column<string>(type: "TEXT", nullable: false),
-                    Size = table.Column<long>(type: "INTEGER", nullable: true),
-                    Sha256 = table.Column<string>(type: "TEXT", nullable: true),
-                    IsReady = table.Column<bool>(type: "INTEGER", nullable: false)
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    DownloadId = table.Column<Guid>(type: "uuid", nullable: false),
+                    WorkspaceGeneration = table.Column<Guid>(type: "uuid", nullable: false),
+                    Kind = table.Column<string>(type: "text", nullable: false),
+                    RelativePath = table.Column<string>(type: "text", nullable: false),
+                    Size = table.Column<long>(type: "bigint", nullable: true),
+                    Sha256 = table.Column<string>(type: "text", nullable: true),
+                    IsReady = table.Column<bool>(type: "boolean", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -87,17 +91,17 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 name: "DownloadAttempts",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    DownloadId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Number = table.Column<int>(type: "INTEGER", nullable: false),
-                    Reason = table.Column<string>(type: "TEXT", nullable: false),
-                    InitialState = table.Column<string>(type: "TEXT", nullable: false),
-                    Status = table.Column<string>(type: "TEXT", nullable: false),
-                    QueuedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    StartedAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    FinishedAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    ErrorCode = table.Column<string>(type: "TEXT", nullable: true),
-                    ErrorDetails = table.Column<string>(type: "TEXT", nullable: true)
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    DownloadId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Number = table.Column<int>(type: "integer", nullable: false),
+                    Reason = table.Column<string>(type: "text", nullable: false),
+                    InitialState = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<string>(type: "text", nullable: false),
+                    QueuedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    StartedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    FinishedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    ErrorCode = table.Column<string>(type: "text", nullable: true),
+                    ErrorDetails = table.Column<string>(type: "text", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -116,17 +120,17 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 name: "StorageTransfers",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    DownloadId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    ArtifactId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    PublicationId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    ObjectKey = table.Column<string>(type: "TEXT", nullable: false),
-                    MultipartUploadId = table.Column<string>(type: "TEXT", nullable: true),
-                    Status = table.Column<string>(type: "TEXT", nullable: false),
-                    ExpectedSize = table.Column<long>(type: "INTEGER", nullable: false),
-                    Sha256 = table.Column<string>(type: "TEXT", nullable: true),
-                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    UpdatedAt = table.Column<long>(type: "INTEGER", nullable: false)
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    DownloadId = table.Column<Guid>(type: "uuid", nullable: false),
+                    ArtifactId = table.Column<Guid>(type: "uuid", nullable: false),
+                    PublicationId = table.Column<Guid>(type: "uuid", nullable: false),
+                    ObjectKey = table.Column<string>(type: "text", nullable: false),
+                    MultipartUploadId = table.Column<string>(type: "text", nullable: true),
+                    Status = table.Column<string>(type: "text", nullable: false),
+                    ExpectedSize = table.Column<long>(type: "bigint", nullable: false),
+                    Sha256 = table.Column<string>(type: "text", nullable: true),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -144,18 +148,18 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 name: "StageExecutions",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    DownloadId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    AttemptId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Stage = table.Column<string>(type: "TEXT", nullable: false),
-                    Status = table.Column<string>(type: "TEXT", nullable: false),
-                    StartedAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    FinishedAt = table.Column<long>(type: "INTEGER", nullable: true),
-                    ReusedFromStageId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    ArtifactId = table.Column<Guid>(type: "TEXT", nullable: true),
-                    Progress = table.Column<double>(type: "REAL", nullable: true),
-                    ErrorCode = table.Column<string>(type: "TEXT", nullable: true),
-                    ErrorDetails = table.Column<string>(type: "TEXT", nullable: true)
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    DownloadId = table.Column<Guid>(type: "uuid", nullable: false),
+                    AttemptId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Stage = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<string>(type: "text", nullable: false),
+                    StartedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    FinishedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    ReusedFromStageId = table.Column<Guid>(type: "uuid", nullable: true),
+                    ArtifactId = table.Column<Guid>(type: "uuid", nullable: true),
+                    Progress = table.Column<double>(type: "double precision", nullable: true),
+                    ErrorCode = table.Column<string>(type: "text", nullable: true),
+                    ErrorDetails = table.Column<string>(type: "text", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -188,13 +192,7 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 column: "ExpiresAt");
 
             migrationBuilder.CreateIndex(
-                name: "IX_AdminSessions_RefreshTokenHash",
-                table: "AdminSessions",
-                column: "RefreshTokenHash",
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_DownloadArtifacts_DownloadId_WorkspaceGeneration_RelativePath",
+                name: "IX_DownloadArtifacts_DownloadId_WorkspaceGeneration_RelativePa~",
                 table: "DownloadArtifacts",
                 columns: new[] { "DownloadId", "WorkspaceGeneration", "RelativePath" },
                 unique: true);
@@ -218,9 +216,9 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                 columns: new[] { "Status", "QueuedAt", "Id" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_Downloads_NormalizedUrl",
+                name: "IX_Downloads_NormalizedUrlHash",
                 table: "Downloads",
-                column: "NormalizedUrl",
+                column: "NormalizedUrlHash",
                 unique: true);
 
             migrationBuilder.CreateIndex(

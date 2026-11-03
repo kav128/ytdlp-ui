@@ -116,7 +116,7 @@ public sealed class LibraryTransportTests : SetupBase
         {
             using var scope = Factory.Services.CreateScope();
             var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var store = scope.ServiceProvider.GetRequiredService<SqliteTicketStore>();
+            var store = scope.ServiceProvider.GetRequiredService<DatabaseTicketStore>();
             var session = database.AdminSessions.Single();
             var ticket = (await store.RetrieveAsync(session.Id))!;
             var identity = (ClaimsIdentity)ticket.Principal.Identity!;
