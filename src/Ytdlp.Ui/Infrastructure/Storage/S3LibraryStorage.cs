@@ -73,7 +73,9 @@ public sealed class S3LibraryStorage(
                 result.LastModified ?? DateTime.UtcNow,
                 result.ETag,
                 Metadata(result.Metadata, "publication-id"),
-                Metadata(result.Metadata, "upload-operation")
+                Metadata(result.Metadata, "upload-operation"),
+                Metadata(result.Metadata, "download-id"),
+                Metadata(result.Metadata, "sha256")
             );
         }
         catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
@@ -132,6 +134,35 @@ public sealed class S3LibraryStorage(
                 LibraryFile.SafeName(name),
                 requestLength,
                 logger
+            )
+        );
+    }
+
+    public Task<IStorageUpload> BeginPublicationAsync(
+        PublicationUpload publication,
+        Func<string, CancellationToken, Task> recordUploadId,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!publication.ObjectKey.StartsWith(
+                $"downloads/{publication.DownloadId:D}/{publication.PublicationId:D}/",
+                StringComparison.Ordinal
+            ))
+            throw new InvalidDataException("Publication key does not match its identity.");
+
+        return Task.FromResult<IStorageUpload>(
+            new S3StorageUpload(
+                client,
+                this,
+                _bucket,
+                paths.Value.WorkDirectory,
+                "",
+                publication.Size,
+                logger,
+                publication,
+                recordUploadId
             )
         );
     }

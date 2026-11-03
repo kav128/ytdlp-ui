@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <ItemGroup>
+        <ProjectReference Include="../Ytdlp.Ui.ProcessFixture/Ytdlp.Ui.ProcessFixture.csproj" />
         <ProjectReference Include="../../src/Ytdlp.Ui/Ytdlp.Ui.csproj" />
     </ItemGroup>
 </Project>

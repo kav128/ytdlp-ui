@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Ytdlp.Ui.Configuration;
 using Ytdlp.Ui.Infrastructure.Storage;
+using Ytdlp.Ui.Infrastructure.Media;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -53,6 +54,7 @@ builder.Services.AddLibraryStorage(builder.Configuration);
 builder.Services.AddScoped<DownloadQueries>();
 builder.Services.AddScoped<DownloadCommands>();
 builder.Services.AddScoped<DownloadQueue>();
+builder.Services.AddMediaProcessing(builder.Configuration);
 
 var app = builder.Build();
 

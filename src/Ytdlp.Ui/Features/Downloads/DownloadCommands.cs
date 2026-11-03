@@ -205,7 +205,13 @@ public sealed class DownloadCommands(
 
         var now = clock.GetUtcNow();
         record.Capture(before, retry.Intent, now);
-        if (newPublication is not null) record.WorkspaceGeneration = Guid.NewGuid();
+
+        if (newPublication is not null)
+        {
+            record.WorkspaceGeneration = Guid.NewGuid();
+            record.MediaPlanJson = null;
+        }
+
         var number = await NextAttemptNumberAsync(record.Id, cancellationToken);
         AddAttempt(record, number, reason, record.ResumeState!.Value, now);
 

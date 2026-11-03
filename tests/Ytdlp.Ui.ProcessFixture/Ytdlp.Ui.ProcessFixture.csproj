@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <IsTestProject>false</IsTestProject>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Remove="Microsoft.NET.Test.Sdk;NUnit;NUnit3TestAdapter;NSubstitute" />
+        <Using Remove="NUnit.Framework" />
+    </ItemGroup>
+</Project>

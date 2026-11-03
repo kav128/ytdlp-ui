@@ -12,7 +12,9 @@ internal sealed class S3StorageUpload : IStorageUpload
     private readonly S3LibraryStorage _storage;
     private readonly ILogger _logger;
     private readonly string _bucket;
-    private readonly string _operation = Guid.NewGuid().ToString("N");
+    private readonly string _operation;
+    private readonly PublicationUpload? _publication;
+    private readonly Func<string, CancellationToken, Task>? _recordUploadId;
     private readonly string _key;
     private readonly string _directory;
     private readonly long _partSize;
@@ -30,14 +32,19 @@ internal sealed class S3StorageUpload : IStorageUpload
         string workDirectory,
         string name,
         long? requestLength,
-        ILogger logger
+        ILogger logger,
+        PublicationUpload? publication = null,
+        Func<string, CancellationToken, Task>? recordUploadId = null
     )
     {
         _client = client;
         _storage = storage;
         _bucket = bucket;
         _logger = logger;
-        _key = $"uploads/{_operation}/{name}";
+        _publication = publication;
+        _recordUploadId = recordUploadId;
+        _operation = publication?.PublicationId.ToString("N") ?? Guid.NewGuid().ToString("N");
+        _key = publication?.ObjectKey ?? $"uploads/{_operation}/{name}";
 
         if (System.Text.Encoding.UTF8.GetByteCount(_key) > 1024)
             throw new InvalidDataException("File name is too long.");
@@ -122,9 +129,10 @@ internal sealed class S3StorageUpload : IStorageUpload
                         ContentType = "application/octet-stream"
                     };
 
-                    initiate.Metadata.Add("upload-operation", _operation);
+                    AddMetadata(initiate.Metadata);
                     _initiationStarted = true;
                     _uploadId = (await _client.InitiateMultipartUploadAsync(initiate, cancellationToken)).UploadId;
+                    if (_recordUploadId is not null) await _recordUploadId(_uploadId, cancellationToken);
                 }
 
                 part.Position = 0;
@@ -175,7 +183,7 @@ internal sealed class S3StorageUpload : IStorageUpload
                     IfNoneMatch = "*"
                 };
 
-                request.Metadata.Add("upload-operation", _operation);
+                AddMetadata(request.Metadata);
                 await _client.PutObjectAsync(request, cancellationToken);
             }
             else
@@ -214,9 +222,26 @@ internal sealed class S3StorageUpload : IStorageUpload
 
         if (stored is null || stored.Size != _size || stored.OperationId != _operation) return null;
 
+        if (_publication is not null
+         && (stored.Size != _publication.Size
+          || stored.PublicationId != _publication.PublicationId.ToString("D")
+          || stored.DownloadId != _publication.DownloadId.ToString("D")
+          || stored.Sha256 != _publication.Sha256)) return null;
+
         _completed = true;
 
         return LibraryFile.Create(_key, stored.Size, stored.Modified);
+    }
+
+    private void AddMetadata(MetadataCollection metadata)
+    {
+        metadata.Add("upload-operation", _operation);
+
+        if (_publication is null) return;
+
+        metadata.Add("download-id", _publication.DownloadId.ToString("D"));
+        metadata.Add("publication-id", _publication.PublicationId.ToString("D"));
+        metadata.Add("sha256", _publication.Sha256);
     }
 
     public async ValueTask DisposeAsync()

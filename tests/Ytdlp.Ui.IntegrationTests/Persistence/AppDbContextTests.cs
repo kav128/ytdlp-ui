@@ -2,6 +2,7 @@ using Npgsql;
 using Ytdlp.Ui.IntegrationTests.Tools;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Ytdlp.Ui.Domain;
@@ -43,7 +44,7 @@ public class AppDbContextTests
     {
         await using var context = CreateContext();
         var migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.That(migrations, Has.Length.EqualTo(1));
+        Assert.That(migrations, Has.Length.EqualTo(2));
         Assert.That(migrations[0], Does.EndWith("_InitialPostgreSql"));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
         Assert.That(context.Database.HasPendingModelChanges(), Is.False);
@@ -116,6 +117,66 @@ public class AppDbContextTests
         Assert.That((await context.Downloads.SingleAsync()).Id, Is.EqualTo(download.Id));
         Assert.That(await context.Attempts.CountAsync(), Is.EqualTo(1));
         Assert.That(await context.AdminSessions.CountAsync(), Is.Zero);
+        Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
+    }
+
+    [Test]
+    public async Task MediaPlanMigrationKeepsEarlierJobsStageHistoryAndTickets()
+    {
+        await using var context = CreateContext();
+        var download = await AddDownloadAsync(context);
+
+        context.Stages.Add(
+            new StageExecutionRecord
+            {
+                Id = Guid.NewGuid(),
+                DownloadId = download.Id,
+                AttemptId = download.CurrentAttemptId,
+                Stage = ProcessingStage.Download,
+                Status = StageStatus.Pending
+            }
+        );
+
+        context.AdminSessions.Add(
+            new AdminSessionRecord
+            {
+                Id = "before-media-plan",
+                IssuedAt = _createdAt,
+                ExpiresAt = _createdAt.AddHours(12),
+                Issuer = "issuer",
+                Subject = "subject",
+                ProtectedTicket = new byte[]
+                {
+                    1,
+                    2,
+                    3
+                }
+            }
+        );
+
+        await context.SaveChangesAsync();
+        var migrator = context.GetService<IMigrator>();
+        await migrator.MigrateAsync("20261103181835_InitialPostgreSql");
+        context.ChangeTracker.Clear();
+        await context.InitializeAsync();
+        var reopened = await context.Downloads.SingleAsync();
+        Assert.That(reopened.Id, Is.EqualTo(download.Id));
+        Assert.That(reopened.MediaPlanJson, Is.Null);
+        Assert.That(await context.Attempts.CountAsync(), Is.EqualTo(1));
+        Assert.That(await context.Stages.CountAsync(), Is.EqualTo(1));
+
+        Assert.That(
+            (await context.AdminSessions.SingleAsync()).ProtectedTicket,
+            Is.EqualTo(
+                new byte[]
+                {
+                    1,
+                    2,
+                    3
+                }
+            )
+        );
+
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
     }
 

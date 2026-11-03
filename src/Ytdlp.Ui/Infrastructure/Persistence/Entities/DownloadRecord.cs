@@ -13,6 +13,7 @@ public sealed class DownloadRecord
     public string NormalizedUrl { get; set; } = null!;
     public byte[] NormalizedUrlHash { get; set; } = [];
     public string? Title { get; set; }
+    public string? MediaPlanJson { get; set; }
     public Guid CurrentAttemptId { get; set; }
     public Guid PublicationId { get; set; }
     public Guid WorkspaceGeneration { get; set; }

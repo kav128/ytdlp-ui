@@ -181,6 +181,9 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("MediaPlanJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("NormalizedUrl")
                         .IsRequired()
                         .HasColumnType("text");

@@ -27,7 +27,7 @@ public class AppDatabaseStartupTests
         using var client = factory.CreateBrowserClient();
         await using var scope = factory.Services.CreateAsyncScope();
         var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        Assert.That((await database.Database.GetAppliedMigrationsAsync()).Single(), Does.EndWith("_InitialPostgreSql"));
+        Assert.That((await database.Database.GetAppliedMigrationsAsync()).First(), Does.EndWith("_InitialPostgreSql"));
         Assert.That(await database.Database.GetPendingMigrationsAsync(), Is.Empty);
         using var response = await client.GetAsync("/api/auth/session");
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));

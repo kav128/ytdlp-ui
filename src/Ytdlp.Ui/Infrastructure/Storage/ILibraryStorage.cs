@@ -8,8 +8,12 @@ public sealed record StoredObject(
     DateTimeOffset Modified,
     string ETag,
     string? PublicationId = null,
-    string? OperationId = null
+    string? OperationId = null,
+    string? DownloadId = null,
+    string? Sha256 = null
 );
+
+public sealed record PublicationUpload(Guid DownloadId, Guid PublicationId, string ObjectKey, long Size, string Sha256);
 
 public interface ILibraryStorage
 {
@@ -17,6 +21,13 @@ public interface ILibraryStorage
     Task<StoredObject?> FindAsync(string key, CancellationToken cancellationToken);
     Task<StorageContent?> OpenAsync(string key, CancellationToken cancellationToken);
     Task<IStorageUpload> BeginUploadAsync(string name, long? requestLength, CancellationToken cancellationToken);
+
+    Task<IStorageUpload> BeginPublicationAsync(
+        PublicationUpload publication,
+        Func<string, CancellationToken, Task> recordUploadId,
+        CancellationToken cancellationToken
+    );
+
     Task DeleteAsync(StoredObject file, CancellationToken cancellationToken);
 }
 

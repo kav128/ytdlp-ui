@@ -15,5 +15,6 @@
         <File Path="tests/Directory.Build.props" />
         <Project Path="tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj" />
         <Project Path="tests/Ytdlp.Ui.Tests/Ytdlp.Ui.Tests.csproj" />
+        <Project Path="tests/Ytdlp.Ui.ProcessFixture/Ytdlp.Ui.ProcessFixture.csproj" />
     </Folder>
 </Solution>

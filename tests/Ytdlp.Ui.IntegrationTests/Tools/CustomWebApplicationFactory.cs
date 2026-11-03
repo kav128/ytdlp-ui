@@ -57,6 +57,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                                                   ["Oidc:ClientSecret"] = FakeOidcProvider.ClientSecret,
                                                   ["Oidc:GroupsClaim"] = "groups",
                                                   ["Oidc:AdminGroup"] = "admins",
+                                                  ["Worker:Enabled"] = "false",
                                                   ["Paths:WorkDirectory"] =
                                                       Path.Combine(Database.DirectoryPath, "work"),
                                                   ["Paths:DataProtectionKeysDirectory"] = Path.Combine(

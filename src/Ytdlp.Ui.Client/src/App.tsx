@@ -119,9 +119,6 @@ export default function App() {
         </header>
 
         <main className="app-main">
-            <div className="demo-banner"><Icon name="info"/>
-                <div><strong>{messages.demo}</strong><p>{messages.demoDescription}</p></div>
-            </div>
             {auth.loginError && <div className="form-error" role="alert">{errorLabel(auth.loginError)}</div>}
             {auth.expired && <div className="session-banner" role="status">{messages.sessionExpired}
                 <button className="button text-button" onClick={auth.login}>{messages.login}</button>
