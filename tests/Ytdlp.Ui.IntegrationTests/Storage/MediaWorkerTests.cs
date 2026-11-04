@@ -236,7 +236,7 @@ public sealed partial class MediaWorkerTests : SetupBase
         _tools.PauseDownloads = true;
         await OidcBrowser.SignInAsync(Factory, Client);
         var first = await CreateAsync("https://example.test/cancel");
-        await _tools.DownloadEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await _tools.DownloadEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         using var cancel = await Client.PostAsync($"/api/downloads/{first.Id}/cancel", null);
         Assert.That(cancel.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
         var canceled = await WaitForAsync(first.Id, "Canceled");

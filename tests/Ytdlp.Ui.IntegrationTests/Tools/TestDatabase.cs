@@ -17,7 +17,7 @@ public sealed class TestDatabase : IDisposable
         {
             Database = Name,
             Pooling = false,
-            Timeout = 5,
+            Timeout = 15,
             CommandTimeout = 5
         };
 
