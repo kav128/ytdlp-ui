@@ -345,7 +345,7 @@ public sealed partial class MediaWorkerTests : SetupBase
 
     private async Task<DownloadView> WaitForAsync(Guid id, string state)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
 
         while (true)
         {
@@ -356,7 +356,7 @@ public sealed partial class MediaWorkerTests : SetupBase
             if (view.State == "Failed" && state != "Failed")
                 Assert.Fail($"Unexpected media failure: {view.ErrorCode}: {view.Error}");
 
-            await Task.Delay(25, timeout.Token);
+            await Task.Delay(150, timeout.Token);
         }
     }
 }

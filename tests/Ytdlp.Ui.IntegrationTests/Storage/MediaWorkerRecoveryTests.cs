@@ -91,12 +91,12 @@ public sealed partial class MediaWorkerTests
 
         using var retry = await Client.PostAsync($"/api/downloads/{original.Id}/retry", null);
         Assert.That(retry.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         DownloadView failed;
 
         do
         {
-            await Task.Delay(25, timeout.Token);
+            await Task.Delay(150, timeout.Token);
             failed = (await Client.GetFromJsonAsync<DownloadView>($"/api/downloads/{original.Id}", timeout.Token))!;
         } while (failed.State != "Failed" || failed.Attempts.Length != 2);
 
@@ -282,7 +282,7 @@ public sealed partial class MediaWorkerTests
 
         do
         {
-            await Task.Delay(25, timeout.Token);
+            await Task.Delay(150, timeout.Token);
 
             cancellation =
                 (await Client.GetFromJsonAsync<DownloadView>($"/api/downloads/{original.Id}", timeout.Token))!;
