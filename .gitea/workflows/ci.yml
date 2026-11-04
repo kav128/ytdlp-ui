@@ -63,7 +63,15 @@ jobs:
       - name: Integration tests
         env:
           TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
-        run: dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build --verbosity normal
+        shell: bash
+        run: |
+          network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$HOSTNAME")"
+          case "$network" in
+            GITEA-ACTIONS-*-network) ;;
+            *) echo "Expected an isolated Gitea job network" >&2; exit 1 ;;
+          esac
+          export YTDLP_TEST_DOCKER_NETWORK="$network"
+          dotnet test tests/Ytdlp.Ui.IntegrationTests/Ytdlp.Ui.IntegrationTests.csproj -c Release --no-build --verbosity normal
 
       - name: Test React
         run: npm test
