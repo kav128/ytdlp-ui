@@ -415,7 +415,8 @@ Docker HEALTHCHECK вызывает readiness на внутреннем порт
 
 Основной `docker compose up --build` использует тот же volume и переменные OIDC/S3 из окружения; `WORKER_ENABLED=false`
 при необходимости сохраняет API/очередь без claim новых попыток. Автоматический деплой в pipeline не входит. CI отдельно
-строит React/.NET, запускает автономные и все интеграционные тесты с настоящими PostgreSQL/MinIO Testcontainers и проверяет
+строит React/.NET на runner `pc`. Версия SDK берётся из `global.json`, а SDK копируется из официального Docker-образа.
+CI запускает автономные и все интеграционные тесты с настоящими PostgreSQL/MinIO Testcontainers и проверяет
 оба publish и побайтовое совпадение `wwwroot` с `dist`. Отсутствие Docker не пропускает контейнерные тесты.
 Только после успешного job `build` job `docker` собирает общий manifest AMD64/ARM64. Вход в реестр Gitea и публикация разрешены только для
 push в фактическую основную ветку `master`; PR собирается без входа в реестр и публикации. Имя owner приводится к нижнему

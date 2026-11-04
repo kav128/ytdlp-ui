@@ -16,9 +16,16 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: global.json
+        shell: bash
+        run: |
+          sdk_version="$(python3 -c 'import json; print(json.load(open("global.json"))["sdk"]["version"])')"
+          sdk_dir="$(mktemp -d)"
+          sdk_container="$(docker create "mcr.microsoft.com/dotnet/sdk:$sdk_version")"
+          trap 'docker rm "$sdk_container" >/dev/null' EXIT
+          docker cp "$sdk_container:/usr/share/dotnet/." "$sdk_dir"
+          test "$("$sdk_dir/dotnet" --version)" = "$sdk_version"
+          echo "DOTNET_ROOT=$sdk_dir" >> "$GITHUB_ENV"
+          echo "$sdk_dir" >> "$GITHUB_PATH"
       - name: Setup Node.js
         shell: bash
         run: |
