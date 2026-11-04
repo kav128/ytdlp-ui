@@ -419,7 +419,7 @@ Docker HEALTHCHECK вызывает readiness на внутреннем порт
 оба publish и побайтовое совпадение `wwwroot` с `dist`. Отсутствие Docker не пропускает контейнерные тесты.
 Только после успешного job `build` job `docker` собирает общий manifest AMD64/ARM64. Вход в реестр Gitea и публикация разрешены только для
 push в фактическую основную ветку `master`; PR собирается без входа в реестр и публикации. Имя owner приводится к нижнему
-регистру; `packages: write` задано только job `docker`. CI не запускает production-приложение и smoke-тесты образов.
+регистру. Для публикации job `docker` использует Actions secret `PACKAGES_TOKEN` с правом `write:package`. CI не запускает production-приложение и smoke-тесты образов.
 
 Календарный тег имеет вид `YYYY.M.D.<github.run_number>`. Источник даты — прежняя author date `%ad`, преобразованная
 в `Europe/Moscow` через `git show --date=format-local:`; committer date источник не заменяет. Регрессия
