@@ -17,7 +17,7 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.14")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -237,6 +237,27 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_Downloads_Version", "\"Version\" >= 1");
                         });
+                });
+
+            modelBuilder.Entity("Ytdlp.Ui.Infrastructure.Persistence.Entities.LibraryTitleRecord", b =>
+                {
+                    b.Property<string>("ObjectKey")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ETag")
+                        .HasColumnType("text");
+
+                    b.Property<long>("ModifiedSecond")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.HasKey("ObjectKey", "ETag", "ModifiedSecond");
+
+                    b.ToTable("LibraryTitles");
                 });
 
             modelBuilder.Entity("Ytdlp.Ui.Infrastructure.Persistence.Entities.StageExecutionRecord", b =>

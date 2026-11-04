@@ -11,9 +11,24 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<DownloadArtifactRecord> Artifacts => Set<DownloadArtifactRecord>();
     public DbSet<StorageTransferRecord> Transfers => Set<StorageTransferRecord>();
     public DbSet<AdminSessionRecord> AdminSessions => Set<AdminSessionRecord>();
+    public DbSet<LibraryTitleRecord> LibraryTitles => Set<LibraryTitleRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<LibraryTitleRecord>(builder =>
+            {
+                builder.HasKey(record => new
+                    {
+                        record.ObjectKey,
+                        record.ETag,
+                        record.ModifiedSecond
+                    }
+                );
+
+                builder.Property(record => record.Title).HasMaxLength(255);
+            }
+        );
+
         modelBuilder.Entity<AdminSessionRecord>(builder =>
             {
                 builder.ToTable(

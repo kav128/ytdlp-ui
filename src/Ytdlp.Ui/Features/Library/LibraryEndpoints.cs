@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
@@ -31,11 +32,15 @@ public static class LibraryEndpoints
 
         group.MapGet(
             "/",
-            async (ILibraryStorage storage, CancellationToken cancellationToken) =>
-                await storage.ListAsync(cancellationToken)
+            async (LibraryTitles titles, CancellationToken cancellationToken) =>
+                await titles.ListAsync(cancellationToken)
         );
 
         group.MapGet("/{id}/content", ContentAsync);
+
+        group.MapPut("/{id}/title", SetTitleAsync)
+             .RequireAuthorization("Admin")
+             .AddEndpointFilter<AdminAntiforgeryFilter>();
 
         group.MapDelete(
                   "/{id}",
@@ -59,6 +64,27 @@ public static class LibraryEndpoints
 
         return endpoints;
     }
+
+    private static async Task<IResult> SetTitleAsync(
+        string id,
+        SetTitleRequest request,
+        LibraryTitles titles,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!LibraryFile.TryDecode(id, out var key)) return Results.NotFound();
+
+        var title = request.Title?.Trim();
+
+        if (title is { Length: > 255 } || request.Title?.Any(char.IsControl) == true)
+            return Error(400, "invalid_title");
+
+        return await titles.SetAsync(key, string.IsNullOrEmpty(title) ? null : title, cancellationToken)
+                   ? Results.NoContent()
+                   : Error(404, "not_found");
+    }
+
+    private sealed record SetTitleRequest([property: JsonRequired] string? Title);
 
     private static async Task<IResult> ContentAsync(string id, HttpContext context, ILibraryStorage storage)
     {

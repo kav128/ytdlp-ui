@@ -7,6 +7,7 @@ import DownloadCard from './features/downloads/DownloadCard';
 import HistoryDialog from './features/downloads/HistoryDialog';
 import NewDownloadDialog from './features/downloads/NewDownloadDialog';
 import {useDownloads} from './features/downloads/useDownloads';
+import EditFileTitleDialog from './features/library/EditFileTitleDialog';
 import LibraryList from './features/library/LibraryList';
 import UploadDialog from './features/library/UploadDialog';
 import {useLibrary} from './features/library/useLibrary';
@@ -28,6 +29,7 @@ export default function App() {
     const {files, loading: libraryLoading, error: libraryError} = useLibrary(`${revision}|${publications}`);
     const [modal, setModal] = useState<'create' | 'upload' | null>(null);
     const [deleteFile, setDeleteFile] = useState<LibraryFile | null>(null);
+    const [editFile, setEditFile] = useState<LibraryFile | null>(null);
     const [cancelId, setCancelId] = useState<string | null>(null);
     const cancelDownload = downloads.find(download => download.id === cancelId);
     const [historyId, setHistoryId] = useState<string | null>(null);
@@ -38,6 +40,7 @@ export default function App() {
 
     useLayoutEffect(() => {
         setDeleteFile(null);
+        setEditFile(null);
         setCancelId(null);
         setHistoryId(null);
         setActionError('');
@@ -57,6 +60,7 @@ export default function App() {
             if (currentSession.current !== token) return;
             setNotice(typeof success === 'function' ? success(result) : success);
             setDeleteFile(null);
+            setEditFile(null);
             setCancelId(null);
             setRevision(value => value + 1);
         } catch (error) {
@@ -71,6 +75,7 @@ export default function App() {
     const closeConfirmation = () => {
         if (!pending) {
             setDeleteFile(null);
+            setEditFile(null);
             setCancelId(null);
             setActionError('');
         }
@@ -156,7 +161,10 @@ export default function App() {
                              role="status">{messages.loading}</div> : files.length === 0 && !libraryError ?
                             <div className="empty-state"><Icon name="library"/><h3>{messages.emptyLibrary}</h3>
                                 <p>{messages.emptyLibraryDescription}</p></div> :
-                            files.length > 0 && <LibraryList files={files} admin={!!auth.sessionId} onDelete={file => {
+                            files.length > 0 && <LibraryList files={files} admin={!!auth.sessionId} onEdit={file => {
+                                setActionError('');
+                                setEditFile(file);
+                            }} onDelete={file => {
                                 setActionError('');
                                 setDeleteFile(file);
                             }}/>}
@@ -185,11 +193,18 @@ export default function App() {
             setNotice(messages.fileUploaded);
             setRevision(value => value + 1);
         }}/>}
+        {editFile && auth.sessionId && <EditFileTitleDialog key={editFile.id} file={editFile} busy={!!pending}
+                                                            error={actionError} onClose={closeConfirmation}
+                                                            onSave={title => void act(
+                                                                () => auth.authorized(token => api.setFileTitle(editFile.id, title, token), auth.sessionId!),
+                                                                editFile.id,
+                                                                title === null ? messages.fileTitleRemoved : messages.fileTitleSaved
+                                                            )}/>}
         {(deleteFile || cancelDownload) && auth.sessionId &&
             <Dialog title={deleteFile ? messages.deleteTitle : messages.cancelTitle} onClose={closeConfirmation}
                     busy={!!pending}>
                 <p className="dialog-description">{deleteFile ? messages.deleteDescription : messages.cancelDescription}</p>
-                <p className="confirmation-name">{deleteFile?.name ?? cancelDownload?.title ?? cancelDownload?.url}</p>
+                <p className="confirmation-name">{deleteFile?.title ?? deleteFile?.name ?? cancelDownload?.title ?? cancelDownload?.url}</p>
                 {actionError && <p className="form-error" role="alert">{actionError}</p>}
                 {cancelDownload && !cancelDownload.allowedActions.includes('cancel') &&
                     <p className="form-error" role="alert">{messages.errors.invalid_state}</p>}

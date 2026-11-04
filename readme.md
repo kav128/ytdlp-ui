@@ -151,10 +151,11 @@ proxy к бэкенду на 5080; рекомендуемый SSO-сценари
 | `GET /api/auth/session`           | Публичный, cookie опциональна                                                     | `200 { authenticated, sessionId }`; без действующей административной сессии false/null                                                                                              |
 | `GET /api/auth/csrf`              | Администратор, cookie                                                             | `200 { requestToken }` для X-CSRF-TOKEN                                                                                                                                             |
 | `POST /api/auth/logout`           | Администратор, cookie + CSRF                                                      | `204` после сохраненного отзыва                                                                                                                                                     |
-| `GET /api/library`                | Публичный                                                                         | Все страницы S3 как плоский массив `{ id, name, size, lastModified, contentUrl }`                                                                                                   |
+| `GET /api/library`                | Публичный                                                                         | Все страницы S3 как плоский массив `{ id, name, title, size, lastModified, contentUrl }`                                                                                            |
 | `GET /api/library/{id}/content`   | Публичный                                                                         | Поток S3 с attachment, octet-stream, Content-Length и nosniff; `404` при подтвержденном отсутствии                                                                                  |
+| `PUT /api/library/{id}/title`     | Администратор, cookie + CSRF                                                      | `{ "title": "…" }` или `{ "title": null }`, `204` при сохранении или сбросе, `400` при неверном запросе, `404` при отсутствии файла, `503` при недоступности S3                     |
 | `DELETE /api/library/{id}`        | Администратор, cookie + CSRF                                                      | Своя публикация: `202 { downloadId }` с Location после durable enqueue; внешний/уже удаленный объект: `204`; `409` при DB/state/pub конфликте; внешнее S3-удаление может дать `503` |
-| `POST /api/library/uploads`       | Администратор, cookie + CSRF; multipart/form-data с единственной file-part `file` | `201` с `{ id, name, size, lastModified, contentUrl }` после проверки S3; `400 invalid_upload` или `503 storage_unavailable`                                                        |
+| `POST /api/library/uploads`       | Администратор, cookie + CSRF; multipart/form-data с единственной file-part `file` | `201` с `{ id, name, title, size, lastModified, contentUrl }` после проверки S3; `400 invalid_upload` или `503 storage_unavailable`                                                 |
 | `GET /api/downloads`              | Администратор                                                                     | Сохраняемые задания с попытками, этапами и allowedActions                                                                                                                           |
 | `GET /api/downloads/{id}`         | Администратор                                                                     | Задание или `404`                                                                                                                                                                   |
 | `POST /api/downloads`             | Администратор, cookie + CSRF; `{ url }`                                           | `201` с Location; `202` для повтора удаленного результата; `400 invalid_url`, `409 download_already_exists`                                                                         |
@@ -263,6 +264,11 @@ bucket. Отсутствующий bucket, `403`, сеть и timeout дают `
 ключ никогда не переиспользуются; устаревший publication-id дает409 и не затрагивает новый ключ. If-Match передается
 как дополнительная защита поддерживающему storage (412 превращается в409), но проверенные старые MinIO игнорируют его:
 атомарность против внешнего writer, заменившего ТОТ ЖЕ ключ строго между HEAD и DELETE, не гарантируется.
+
+В каталоге заголовок (`title`) имеет приоритет перед исходным именем (`name`). Администратор может открыть форму
+редактирования у любого файла, увидеть исходное имя и сохранить или удалить заголовок. Пустая строка после удаления
+краевых пробелов сбрасывает заголовок, как и `null`. Сервер принимает до 255 кодовых единиц UTF-16 без управляющих
+символов. Заголовок хранится в PostgreSQL. Скачивание сохраняет прежнюю ссылку, байты и исходное имя файла.
 
 Upload принимает ровно одну file-part `file`; поля и дополнительные части отклоняются. Cookie/роль и CSRF-header
 проверяются до чтения тела. Форма читается `MultipartReader`, без `IFormFile` и буферизации целого файла в RAM. Одна часть

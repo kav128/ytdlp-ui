@@ -9,7 +9,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.EventLog;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using NSubstitute;
-using Ytdlp.Ui.Features.Library;
 using Ytdlp.Ui.Infrastructure.Storage;
 
 namespace Ytdlp.Ui.IntegrationTests.Tools;
@@ -28,7 +27,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         _ownsDatabase = database is null;
         Database = database ?? new TestDatabase();
         _configure = configure;
-        Storage.ListAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(Array.Empty<LibraryFile>()));
+        Storage.ListAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(Array.Empty<StoredObject>()));
         Storage.CheckReadyAsync(Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
     }
 

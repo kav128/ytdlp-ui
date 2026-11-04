@@ -3,13 +3,20 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace Ytdlp.Ui.Features.Library;
 
-public sealed record LibraryFile(string Id, string Name, long Size, DateTimeOffset LastModified, string ContentUrl)
+public sealed record LibraryFile(
+    string Id,
+    string Name,
+    long Size,
+    DateTimeOffset LastModified,
+    string ContentUrl,
+    string? Title = null
+)
 {
-    public static LibraryFile Create(string key, long size, DateTimeOffset modified)
+    public static LibraryFile Create(string key, long size, DateTimeOffset modified, string? title = null)
     {
         var id = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(key));
 
-        return new(id, SafeName(key), size, modified, $"/api/library/{id}/content");
+        return new(id, SafeName(key), size, modified, $"/api/library/{id}/content", title);
     }
 
     public static bool TryDecode(string id, out string key)

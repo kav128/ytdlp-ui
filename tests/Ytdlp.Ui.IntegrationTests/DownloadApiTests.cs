@@ -26,7 +26,7 @@ public class DownloadApiTests : SetupBase
             255
         };
 
-        var file = LibraryFile.Create("external/test.bin", bytes.Length, DateTimeOffset.UtcNow);
+        var file = new StoredObject("external/test.bin", bytes.Length, DateTimeOffset.UtcNow, "test-etag");
         Factory.Storage.ListAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(new[] { file }));
         var stream = new MemoryStream(bytes);
 

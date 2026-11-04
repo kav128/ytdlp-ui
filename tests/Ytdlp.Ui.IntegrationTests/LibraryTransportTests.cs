@@ -178,9 +178,9 @@ public sealed class LibraryTransportTests : SetupBase
     public async Task StorageFailureReturnsSafe503()
     {
         Factory.Storage.ListAsync(Arg.Any<CancellationToken>())
-               .Returns<LibraryFile[]>(_ => throw new StorageUnavailableException(
-                                                new IOException("private-storage-secret")
-                                            )
+               .Returns<StoredObject[]>(_ => throw new StorageUnavailableException(
+                                                 new IOException("private-storage-secret")
+                                             )
                 );
 
         using var response = await Client.GetAsync("/api/library");

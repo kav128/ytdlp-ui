@@ -1,4 +1,11 @@
-export type LibraryFile = { id: string; name: string; size: number; lastModified: string; contentUrl: string };
+export type LibraryFile = {
+    id: string;
+    name: string;
+    size: number;
+    lastModified: string;
+    contentUrl: string;
+    title?: string | null
+};
 export type DownloadState =
     'Queued'
     | 'Downloading'
@@ -66,6 +73,9 @@ export async function request<T>(path: string, options: {
 
 export const api = {
     library: (signal?: AbortSignal) => request<LibraryFile[]>('/library', {signal}),
+    setFileTitle: (id: string, title: string | null, csrf: string) => request<void>(`/library/${encodeURIComponent(id)}/title`, {
+        method: 'PUT', body: {title}, csrf
+    }),
     upload: (file: File, csrf: string, signal?: AbortSignal) => {
         const form = new FormData();
         form.append('file', file);

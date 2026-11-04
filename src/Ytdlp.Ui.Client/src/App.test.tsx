@@ -39,6 +39,39 @@ afterEach(() => {
 });
 
 describe('library and SSO workspace', () => {
+    it('lets an administrator save and remove a title while keeping the original download link', async () => {
+        const file = (await api.library())[0];
+        const update = vi.spyOn(api, 'setFileTitle').mockImplementation(async (_id, title) => {
+            vi.mocked(api.library).mockResolvedValue([{...file, title}]);
+        });
+        render(<App/>);
+        fireEvent.click(await screen.findByRole('button', {name: `${messages.editFileTitle}: ${file.name}`}));
+        const editor = within(screen.getByRole('dialog'));
+        expect(editor.getByText(file.name)).toBeInTheDocument();
+        fireEvent.change(editor.getByLabelText(messages.fileTitle), {target: {value: 'Public title'}});
+        fireEvent.click(editor.getByRole('button', {name: messages.saveFileTitle}));
+
+        expect(await screen.findByRole('heading', {name: 'Public title'})).toBeInTheDocument();
+        expect(update).toHaveBeenCalledWith(file.id, 'Public title', 'csrf-token');
+        expect(screen.getByRole('link', {name: `${messages.download}: Public title`})).toHaveAttribute('href', file.contentUrl);
+
+        fireEvent.click(screen.getByRole('button', {name: `${messages.editFileTitle}: Public title`}));
+        const editAgain = within(screen.getByRole('dialog'));
+        expect(editAgain.getByLabelText(messages.fileTitle)).toHaveValue('Public title');
+        fireEvent.click(editAgain.getByRole('button', {name: messages.removeFileTitle}));
+        expect(await screen.findByRole('heading', {name: file.name})).toBeInTheDocument();
+        expect(update).toHaveBeenLastCalledWith(file.id, null, 'csrf-token');
+    });
+
+    it('shows titles to anonymous visitors without the edit action', async () => {
+        const file = (await api.library())[0];
+        vi.mocked(api.session).mockResolvedValue({authenticated: false, sessionId: null});
+        vi.mocked(api.library).mockResolvedValue([{...file, title: 'Public title'}]);
+        render(<App/>);
+        expect(await screen.findByRole('heading', {name: 'Public title'})).toBeInTheDocument();
+        expect(screen.queryByRole('button', {name: `${messages.editFileTitle}: Public title`})).not.toBeInTheDocument();
+    });
+
     it('updates an open history from the current poll instead of retaining a snapshot', async () => {
         render(<App/>);
         fireEvent.click(await screen.findByRole('button', {name: messages.history}));

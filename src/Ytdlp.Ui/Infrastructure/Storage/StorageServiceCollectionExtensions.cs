@@ -55,6 +55,7 @@ public static class StorageServiceCollectionExtensions
 
         services.AddSingleton<ILibraryStorage, S3LibraryStorage>();
         services.AddScoped<LibraryDeletionService>();
+        services.AddScoped<LibraryTitles>();
 
         return services;
     }

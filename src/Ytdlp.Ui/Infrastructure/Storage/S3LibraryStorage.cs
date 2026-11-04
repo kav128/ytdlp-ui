@@ -36,11 +36,11 @@ public sealed class S3LibraryStorage(
         }
     }
 
-    public async Task<LibraryFile[]> ListAsync(CancellationToken cancellationToken)
+    public async Task<StoredObject[]> ListAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var files = new List<LibraryFile>();
+            var files = new List<StoredObject>();
             string? continuation = null;
 
             do
@@ -55,7 +55,7 @@ public sealed class S3LibraryStorage(
                            );
 
                 foreach (var item in page.S3Objects ?? [])
-                    files.Add(LibraryFile.Create(item.Key, item.Size ?? 0, item.LastModified ?? DateTime.UtcNow));
+                    files.Add(new(item.Key, item.Size ?? 0, item.LastModified ?? DateTime.UtcNow, item.ETag));
 
                 continuation = page.IsTruncated == true ? page.NextContinuationToken : null;
 
@@ -63,9 +63,7 @@ public sealed class S3LibraryStorage(
                     throw new StorageUnavailableException();
             } while (continuation is not null);
 
-            return files.OrderByDescending(file => file.LastModified)
-                        .ThenBy(file => file.Id, StringComparer.Ordinal)
-                        .ToArray();
+            return files.ToArray();
         }
         catch (Exception error) when (IsStorageError(error)
                                    || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)

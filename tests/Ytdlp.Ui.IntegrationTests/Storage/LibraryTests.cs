@@ -13,6 +13,108 @@ namespace Ytdlp.Ui.IntegrationTests.Storage;
 public sealed class LibraryTests : SetupBase
 {
     [Test]
+    public async Task AdministratorCanSetReplaceAndClearTitleWithoutChangingOriginalFile()
+    {
+        const string key = "external/исходное имя.bin";
+
+        var bytes = new byte[]
+        {
+            42,
+            0,
+            255
+        };
+
+        await PutAsync(key, bytes);
+
+        using var anonymous = Factory.CreateBrowserClient();
+        var original = (await anonymous.GetFromJsonAsync<LibraryFile[]>("/api/library"))!.Single();
+        var path = $"/api/library/{original.Id}/title";
+        Assert.That(original.Title, Is.Null);
+
+        await OidcBrowser.SignInAsync(Factory, Client);
+
+        foreach (var title in new[]
+                 {
+                     "  Первый заголовок  ",
+                     "Новый заголовок",
+                     null
+                 })
+        {
+            using var updated = await Client.PutAsJsonAsync(path, new { title });
+
+            Assert.That(
+                updated.StatusCode,
+                Is.EqualTo(HttpStatusCode.NoContent),
+                await updated.Content.ReadAsStringAsync()
+            );
+
+            var listed = (await anonymous.GetFromJsonAsync<LibraryFile[]>("/api/library"))!.Single();
+            Assert.That(listed, Is.EqualTo(original with { Title = title?.Trim() }));
+
+            using var content = await anonymous.GetAsync(original.ContentUrl);
+            Assert.That(content.Content.Headers.ContentDisposition?.FileNameStar, Is.EqualTo(original.Name));
+            Assert.That(await content.Content.ReadAsByteArrayAsync(), Is.EqualTo(bytes));
+        }
+    }
+
+    [Test]
+    public async Task ReplacementAtSameKeyDoesNotInheritTitle()
+    {
+        const string key = "external/file.bin";
+        await PutAsync(key, [1]);
+        await OidcBrowser.SignInAsync(Factory, Client);
+        var original = (await Client.GetFromJsonAsync<LibraryFile[]>("/api/library"))!.Single();
+
+        using var updated = await Client.PutAsJsonAsync(
+                                $"/api/library/{original.Id}/title",
+                                new { title = "Original" }
+                            );
+
+        Assert.That(updated.StatusCode, Is.EqualTo(HttpStatusCode.NoContent));
+
+        Assert.That(
+            (await Client.GetFromJsonAsync<LibraryFile[]>("/api/library"))!.Single().Title,
+            Is.EqualTo("Original")
+        );
+
+        await PutAsync(key, [2]);
+
+        var replacement = (await Client.GetFromJsonAsync<LibraryFile[]>("/api/library"))!.Single();
+        Assert.That(replacement.Id, Is.EqualTo(original.Id));
+        Assert.That(replacement.Title, Is.Null);
+    }
+
+    [Test]
+    public async Task TitleUpdateRejectsUnauthorizedInvalidAndMissingObjectRequests()
+    {
+        const string key = "external/file.bin";
+        await PutAsync(key, [1]);
+        var file = LibraryFile.Create(key, 1, DateTimeOffset.UtcNow);
+        var path = $"/api/library/{file.Id}/title";
+        var body = new { title = "Title" };
+        using var unauthorized = await Client.PutAsJsonAsync(path, body);
+        Assert.That(unauthorized.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+        await OidcBrowser.SignInAsync(Factory, Client);
+        var csrf = Client.DefaultRequestHeaders.GetValues("X-CSRF-TOKEN").Single();
+        Client.DefaultRequestHeaders.Remove("X-CSRF-TOKEN");
+        using var missingCsrf = await Client.PutAsJsonAsync(path, body);
+        Assert.That(missingCsrf.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Client.DefaultRequestHeaders.Add("X-CSRF-TOKEN", csrf);
+
+        using var invalid = await Client.PutAsJsonAsync(path, new { title = new string('x', 256) });
+        Assert.That(invalid.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(await invalid.Content.ReadAsStringAsync(), Does.Contain("invalid_title"));
+        using var missingTitle = await Client.PutAsJsonAsync(path, new { });
+        Assert.That(missingTitle.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That((await Client.GetFromJsonAsync<LibraryFile[]>("/api/library"))!.Single().Title, Is.Null);
+
+        await S3.DeleteObjectAsync(Bucket, key);
+        using var missingFile = await Client.PutAsJsonAsync(path, body);
+        Assert.That(missingFile.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+    }
+
+    [Test]
     public async Task ListingIncludesAllPagesAndExternalUtf8Keys()
     {
         var keys = Enumerable.Range(0, 1003)

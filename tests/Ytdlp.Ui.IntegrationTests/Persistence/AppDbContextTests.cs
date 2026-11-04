@@ -44,8 +44,9 @@ public class AppDbContextTests
     {
         await using var context = CreateContext();
         var migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.That(migrations, Has.Length.EqualTo(3));
+        Assert.That(migrations, Is.EqualTo(context.Database.GetMigrations()));
         Assert.That(migrations[0], Does.EndWith("_InitialPostgreSql"));
+        Assert.That(migrations, Has.Some.EndsWith("_LibraryTitles"));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
         Assert.That(context.Database.HasPendingModelChanges(), Is.False);
         await context.InitializeAsync();
