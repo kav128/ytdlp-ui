@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: pc
     steps:
       - uses: actions/checkout@v6
 
@@ -78,7 +78,7 @@ jobs:
 
   docker:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: pc
     permissions:
       contents: read
       packages: write
