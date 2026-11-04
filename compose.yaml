@@ -3,6 +3,22 @@ services:
     build: .
     ports:
       - "5080:8080"
+    environment:
+      ConnectionStrings__AppDatabase: ${APP_DATABASE_CONNECTION:-Host=postgres;Database=ytdlp_ui;Username=ytdlp_ui;Password=replace-with-postgresql-password}
+      Oidc__Authority: ${OIDC_AUTHORITY:-https://authentik.example.test/application/o/ytdlp-ui/}
+      Oidc__ClientId: ${OIDC_CLIENT_ID:-ytdlp-ui}
+      Oidc__ClientSecret: ${OIDC_CLIENT_SECRET:-replace-with-authentik-client-secret}
+      Oidc__GroupsClaim: ${OIDC_GROUPS_CLAIM:-groups}
+      Oidc__AdminGroup: ${OIDC_ADMIN_GROUP:-ytdlp-ui-admins}
+      Paths__DataProtectionKeysDirectory: /data/keys
+      Paths__WorkDirectory: /data/work
+      Worker__Enabled: ${WORKER_ENABLED:-true}
+      S3__Endpoint: ${S3_ENDPOINT:-http://minio:9000}
+      S3__Region: ${S3_REGION:-us-east-1}
+      S3__Bucket: ${S3_BUCKET:-ytdlp-ui}
+      S3__AccessKey: ${S3_ACCESS_KEY:-replace-with-s3-access-key}
+      S3__SecretKey: ${S3_SECRET_KEY:-replace-with-s3-secret-key}
+      S3__ForcePathStyle: ${S3_FORCE_PATH_STYLE:-true}
     volumes:
       - app-data:/data
 

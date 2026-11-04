@@ -14,5 +14,6 @@ public sealed class DownloadAttemptRecord
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }
     public string? ErrorCode { get; set; }
+    public string? ContinuationReasonCode { get; set; }
     public string? ErrorDetails { get; set; }
 }

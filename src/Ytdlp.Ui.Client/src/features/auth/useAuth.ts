@@ -1,115 +1,119 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError, type AccessToken } from '../../api/client';
+import {useCallback, useEffect, useRef, useState} from 'react';
+import {api, ApiError} from '../../api/client';
 
 export const sessionKey = 'ytdlp-ui.session';
-export type AuthenticatedRequest = <T>(operation: (token: string) => Promise<T>, sessionId: string) => Promise<T>;
-
-function storedSession(): AccessToken | null {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(sessionKey) ?? 'null') as Partial<AccessToken> | null;
-    if (typeof saved?.accessToken === 'string' && typeof saved.refreshToken === 'string' && typeof saved.expiresAt === 'string') return saved as AccessToken;
-    sessionStorage.removeItem(sessionKey);
-  } catch { sessionStorage.removeItem(sessionKey); }
-  return null;
-}
+export type AuthenticatedRequest = <T>(operation: (csrf: string) => Promise<T>, sessionId: string) => Promise<T>;
 
 export function useAuth() {
-  const [initialSession] = useState(storedSession);
-  // The initial access token identifies this UI session even when its token pair rotates.
-  const [sessionId, setSessionId] = useState(initialSession?.accessToken ?? null);
-  const sessionIdRef = useRef(sessionId);
-  const sessionRef = useRef(initialSession);
-  const refreshFlight = useRef<{ refreshToken: string; promise: Promise<AccessToken> } | null>(null);
-  const [authenticatedSession, setAuthenticatedSession] = useState<string | null>(null);
-  const [checking, setChecking] = useState(sessionId !== null);
-  const [expired, setExpired] = useState(false);
+    const [sessionId, setSessionId] = useState<string | null>(null);
+    const sessionRef = useRef<string | null>(null);
+    const generation = useRef(0);
+    const verification = useRef(0);
+    const mounted = useRef(false);
+    const csrfFlight = useRef<{ sessionId: string; promise: Promise<string> } | null>(null);
+    const [checking, setChecking] = useState(true);
+    const [expired, setExpired] = useState(false);
+    const [loginError, setLoginError] = useState(() => {
+        const code = new URLSearchParams(window.location.search).get('authError');
+        return code === 'access_denied' || code === 'login_failed' ? code : null;
+    });
 
-  const clear = useCallback((currentSession: string) => {
-    if (sessionIdRef.current !== currentSession) return;
-    sessionIdRef.current = null;
-    sessionRef.current = null;
-    sessionStorage.removeItem(sessionKey);
-    setSessionId(null);
-    setAuthenticatedSession(null);
-    setChecking(false);
-  }, []);
+    const clear = useCallback((currentSession: string) => {
+        if (sessionRef.current !== currentSession) return;
+        generation.current++;
+        sessionRef.current = null;
+        csrfFlight.current = null;
+        setSessionId(null);
+        setChecking(false);
+    }, []);
 
-  const unauthorized = useCallback((error: unknown, currentSession: string) => {
-    if (error instanceof ApiError && error.status === 401 && sessionIdRef.current === currentSession) {
-      clear(currentSession);
-      setExpired(true);
+    const unauthorized = useCallback((error: unknown, currentSession: string) => {
+        if (error instanceof ApiError && error.status === 401 && sessionRef.current === currentSession) {
+            clear(currentSession);
+            setExpired(true);
+        }
+    }, [clear]);
+
+    const checkSession = useCallback(async (signal?: AbortSignal) => {
+        const startedAt = generation.current;
+        const attempt = ++verification.current;
+        try {
+            const next = await api.session(signal);
+            if (!mounted.current || signal?.aborted || startedAt !== generation.current || attempt !== verification.current) return;
+            const nextId = next.authenticated && typeof next.sessionId === 'string' ? next.sessionId : null;
+            if (nextId) {
+                setExpired(false);
+                setLoginError(null);
+            }
+            if (nextId !== sessionRef.current) {
+                if (!nextId && sessionRef.current) setExpired(true);
+                generation.current++;
+                sessionRef.current = nextId;
+                csrfFlight.current = null;
+                setSessionId(nextId);
+            }
+            setChecking(false);
+        } catch {
+            if (mounted.current && !signal?.aborted && startedAt === generation.current && attempt === verification.current) setChecking(false);
+        }
+    }, []);
+
+    const authorized: AuthenticatedRequest = useCallback(async (operation, currentSession) => {
+        function verify() {
+            if (sessionRef.current !== currentSession) throw new DOMException('Session changed.', 'AbortError');
+        }
+
+        try {
+            verify();
+            let flight = csrfFlight.current;
+            if (flight?.sessionId !== currentSession) {
+                flight = {sessionId: currentSession, promise: api.csrf().then(value => value.requestToken)};
+                csrfFlight.current = flight;
+                flight.promise.catch(() => {
+                    if (csrfFlight.current === flight) csrfFlight.current = null;
+                });
+            }
+            const csrf = await flight.promise;
+            verify();
+            const result = await operation(csrf);
+            verify();
+            return result;
+        } catch (error) {
+            if (error instanceof ApiError && error.code === 'antiforgery_failed' && csrfFlight.current?.sessionId === currentSession) csrfFlight.current = null;
+            unauthorized(error, currentSession);
+            throw error;
+        }
+    }, [unauthorized]);
+
+    useEffect(() => {
+        mounted.current = true;
+        sessionStorage.removeItem(sessionKey);
+        const controller = new AbortController();
+        void checkSession(controller.signal);
+        const refresh = () => {
+            if (!document.hidden) void checkSession(controller.signal);
+        };
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', refresh);
+        return () => {
+            mounted.current = false;
+            controller.abort();
+            window.removeEventListener('focus', refresh);
+            document.removeEventListener('visibilitychange', refresh);
+        };
+    }, [checkSession]);
+
+    function login() {
+        setLoginError(null);
+        api.login();
     }
-  }, [clear]);
 
-  const authorized: AuthenticatedRequest = useCallback(async (operation, currentSession) => {
-    function current() {
-      if (sessionIdRef.current !== currentSession || !sessionRef.current) throw new DOMException('Session changed.', 'AbortError');
-      return sessionRef.current;
+    async function logout() {
+        const currentSession = sessionRef.current;
+        if (!currentSession) return;
+        await authorized(csrf => api.logout(csrf), currentSession);
+        clear(currentSession);
     }
-    async function refresh() {
-      const previous = current();
-      let flight = refreshFlight.current;
-      if (flight?.refreshToken !== previous.refreshToken) {
-        const promise = api.refresh(previous.refreshToken).then(next => {
-          if (current().refreshToken !== previous.refreshToken) throw new DOMException('Session changed.', 'AbortError');
-          sessionStorage.setItem(sessionKey, JSON.stringify(next));
-          sessionRef.current = next;
-          return next;
-        }).finally(() => { if (refreshFlight.current?.promise === promise) refreshFlight.current = null; });
-        flight = { refreshToken: previous.refreshToken, promise };
-        refreshFlight.current = flight;
-      }
-      return flight.promise;
-    }
-    try {
-      let session = current();
-      if (Date.parse(session.expiresAt) <= Date.now()) session = await refresh();
-      const usedToken = session.accessToken;
-      try {
-        const result = await operation(usedToken);
-        current();
-        return result;
-      } catch (error) {
-        if (!(error instanceof ApiError) || error.status !== 401) throw error;
-        session = current();
-        if (session.accessToken === usedToken) session = await refresh();
-        const result = await operation(session.accessToken);
-        current();
-        return result;
-      }
-    } catch (error) { unauthorized(error, currentSession); throw error; }
-  }, [unauthorized]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-    const controller = new AbortController();
-    let active = true;
-    setChecking(true);
-    authorized(token => api.session(token, controller.signal), sessionId).then(result => {
-      if (!active || sessionIdRef.current !== sessionId) return;
-      if (result.authenticated) setAuthenticatedSession(sessionId);
-      else clear(sessionId);
-      setChecking(false);
-    }).catch(() => { if (active) setChecking(false); });
-    return () => { active = false; controller.abort(); };
-  }, [sessionId, clear, authorized]);
-
-  async function login(username: string, password: string) {
-    const session = await api.login(username, password);
-    sessionStorage.setItem(sessionKey, JSON.stringify(session));
-    sessionRef.current = session;
-    sessionIdRef.current = session.accessToken;
-    setChecking(true);
-    setExpired(false);
-    setSessionId(session.accessToken);
-  }
-
-  async function logout() {
-    const currentSession = sessionIdRef.current;
-    if (!currentSession) return;
-    await authorized(token => api.logout(token), currentSession);
-    clear(currentSession);
-  }
-
-  return { sessionId: sessionId && authenticatedSession === sessionId ? sessionId : null, checking, expired, login, logout, unauthorized, authorized };
+    return {sessionId, checking, expired, loginError, login, logout, unauthorized, authorized};
 }

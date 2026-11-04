@@ -1,0 +1,28 @@
+services:
+  app:
+    environment:
+      S3__Endpoint: http://minio:9000
+      S3__Bucket: ytdlp-ui
+      S3__AccessKey: ${LOCAL_MINIO_ROOT_USER:-local-admin}
+      S3__SecretKey: ${LOCAL_MINIO_ROOT_PASSWORD:-local-development-password}
+    depends_on:
+      minio:
+        condition: service_healthy
+  minio:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5@sha256:6dabb4a2088c9a79908de3bc05f4586c23ad2182c8908e7e3acbf61c1467fb20
+    environment:
+      MINIO_ROOT_USER: ${LOCAL_MINIO_ROOT_USER:-local-admin}
+      MINIO_ROOT_PASSWORD: ${LOCAL_MINIO_ROOT_PASSWORD:-local-development-password}
+      MINIO_DEFAULT_BUCKETS: ytdlp-ui:download
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - local-minio-data:/bitnami/minio/data
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "--silent", "http://localhost:9000/minio/health/ready" ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+volumes:
+  local-minio-data:
