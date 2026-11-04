@@ -23,6 +23,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24.19.0
+          mirror: https://nodejs.org/dist
           cache: npm
           cache-dependency-path: src/Ytdlp.Ui.Client/package-lock.json
       - name: Restore React dependencies
