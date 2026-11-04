@@ -12,8 +12,8 @@ using Ytdlp.Ui.Infrastructure.Persistence;
 namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261104105128_LibraryTitles")]
-    partial class LibraryTitles
+    [Migration("20261104111312_InitialPostgreSql")]
+    partial class InitialPostgreSql
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

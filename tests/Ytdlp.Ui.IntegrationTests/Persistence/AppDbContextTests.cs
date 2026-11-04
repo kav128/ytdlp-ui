@@ -1,8 +1,6 @@
 using Npgsql;
 using Ytdlp.Ui.IntegrationTests.Tools;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Ytdlp.Ui.Domain;
@@ -44,9 +42,8 @@ public class AppDbContextTests
     {
         await using var context = CreateContext();
         var migrations = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-        Assert.That(migrations, Is.EqualTo(context.Database.GetMigrations()));
+        Assert.That(migrations, Has.Length.EqualTo(1));
         Assert.That(migrations[0], Does.EndWith("_InitialPostgreSql"));
-        Assert.That(migrations, Has.Some.EndsWith("_LibraryTitles"));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
         Assert.That(context.Database.HasPendingModelChanges(), Is.False);
         await context.InitializeAsync();
@@ -118,101 +115,6 @@ public class AppDbContextTests
         Assert.That((await context.Downloads.SingleAsync()).Id, Is.EqualTo(download.Id));
         Assert.That(await context.Attempts.CountAsync(), Is.EqualTo(1));
         Assert.That(await context.AdminSessions.CountAsync(), Is.Zero);
-        Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
-    }
-
-    [Test]
-    public async Task MediaPlanMigrationKeepsEarlierJobsStageHistoryAndTickets()
-    {
-        await using var context = CreateContext();
-        var download = await AddDownloadAsync(context);
-
-        context.Stages.Add(
-            new StageExecutionRecord
-            {
-                Id = Guid.NewGuid(),
-                DownloadId = download.Id,
-                AttemptId = download.CurrentAttemptId,
-                Stage = ProcessingStage.Download,
-                Status = StageStatus.Pending
-            }
-        );
-
-        context.AdminSessions.Add(
-            new AdminSessionRecord
-            {
-                Id = "before-media-plan",
-                IssuedAt = _createdAt,
-                ExpiresAt = _createdAt.AddHours(12),
-                Issuer = "issuer",
-                Subject = "subject",
-                ProtectedTicket = new byte[]
-                {
-                    1,
-                    2,
-                    3
-                }
-            }
-        );
-
-        await context.SaveChangesAsync();
-        var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20261103181835_InitialPostgreSql");
-        context.ChangeTracker.Clear();
-        await context.InitializeAsync();
-        var reopened = await context.Downloads.SingleAsync();
-        Assert.That(reopened.Id, Is.EqualTo(download.Id));
-        Assert.That(reopened.MediaPlanJson, Is.Null);
-        Assert.That(await context.Attempts.CountAsync(), Is.EqualTo(1));
-        Assert.That(await context.Stages.CountAsync(), Is.EqualTo(1));
-
-        Assert.That(
-            (await context.AdminSessions.SingleAsync()).ProtectedTicket,
-            Is.EqualTo(
-                new byte[]
-                {
-                    1,
-                    2,
-                    3
-                }
-            )
-        );
-
-        Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
-    }
-
-    [TestCase("The media plan is missing; downloading must be restored.", "media_plan_missing", true)]
-    [TestCase(
-        "A required artifact is missing or has a different size/SHA-256; the earliest necessary stage will be restored.",
-        "artifacts_unavailable",
-        true
-    )]
-    [TestCase("The existing publication will be reconciled before any upload.", "publication_reconciliation", true)]
-    [TestCase("The stage failed; its files were retained for a manual retry.", null, true)]
-    [TestCase("playlist_not_supported", null, true)]
-    [TestCase("ffmpeg stderr: unsupported packet at 00:01", null, false)]
-    public async Task ContinuationMigrationPreservesHistoryAndRealDiagnosticsWhileReplacingExactOwnedMessages(
-        string details,
-        string? reason,
-        bool cleared
-    )
-    {
-        await using var context = CreateContext();
-        var record = await AddDownloadAsync(context);
-        var attempt = await context.Attempts.SingleAsync();
-        var id = attempt.Id;
-        attempt.ErrorCode = "prepare_failed";
-        attempt.ErrorDetails = details;
-        await context.SaveChangesAsync();
-        await context.GetService<IMigrator>().MigrateAsync("20261103185351_MediaPlan");
-        context.ChangeTracker.Clear();
-        await context.InitializeAsync();
-        var restored = await context.Attempts.SingleAsync();
-        Assert.That(restored.Id, Is.EqualTo(id));
-        Assert.That(restored.DownloadId, Is.EqualTo(record.Id));
-        Assert.That(restored.ErrorCode, Is.EqualTo("prepare_failed"));
-        Assert.That(restored.ContinuationReasonCode, Is.EqualTo(reason));
-        Assert.That(restored.ErrorDetails, Is.EqualTo(cleared ? null : details));
         Assert.That(await context.Database.GetPendingMigrationsAsync(), Is.Empty);
     }
 

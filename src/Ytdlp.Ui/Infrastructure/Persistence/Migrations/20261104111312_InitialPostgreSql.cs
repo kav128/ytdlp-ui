@@ -38,6 +38,7 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                     NormalizedUrl = table.Column<string>(type: "text", nullable: false),
                     NormalizedUrlHash = table.Column<byte[]>(type: "bytea", nullable: false),
                     Title = table.Column<string>(type: "text", nullable: true),
+                    MediaPlanJson = table.Column<string>(type: "text", nullable: true),
                     CurrentAttemptId = table.Column<Guid>(type: "uuid", nullable: false),
                     PublicationId = table.Column<Guid>(type: "uuid", nullable: false),
                     WorkspaceGeneration = table.Column<Guid>(type: "uuid", nullable: false),
@@ -59,6 +60,20 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                     table.PrimaryKey("PK_Downloads", x => x.Id);
                     table.CheckConstraint("CK_Downloads_UrlHashLength", "octet_length(\"NormalizedUrlHash\") = 32");
                     table.CheckConstraint("CK_Downloads_Version", "\"Version\" >= 1");
+                });
+
+            migrationBuilder.CreateTable(
+                name: "LibraryTitles",
+                columns: table => new
+                {
+                    ObjectKey = table.Column<string>(type: "text", nullable: false),
+                    ETag = table.Column<string>(type: "text", nullable: false),
+                    ModifiedSecond = table.Column<long>(type: "bigint", nullable: false),
+                    Title = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_LibraryTitles", x => new { x.ObjectKey, x.ETag, x.ModifiedSecond });
                 });
 
             migrationBuilder.CreateTable(
@@ -101,6 +116,7 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
                     StartedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     FinishedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     ErrorCode = table.Column<string>(type: "text", nullable: true),
+                    ContinuationReasonCode = table.Column<string>(type: "text", nullable: true),
                     ErrorDetails = table.Column<string>(type: "text", nullable: true)
                 },
                 constraints: table =>
@@ -265,6 +281,9 @@ namespace Ytdlp.Ui.Infrastructure.Persistence.Migrations
         {
             migrationBuilder.DropTable(
                 name: "AdminSessions");
+
+            migrationBuilder.DropTable(
+                name: "LibraryTitles");
 
             migrationBuilder.DropTable(
                 name: "StageExecutions");
