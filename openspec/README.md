@@ -28,17 +28,17 @@
 ручную отправку файлов и PostgreSQL с чистой БД без импорта. Changes сохраняются активными, без архивации; их delta
 уже применены к основным спецификациям.
 
-| Capability                                                 | Содержание                                                                           |
-|------------------------------------------------------------|--------------------------------------------------------------------------------------|
-| [administrator-access](specs/administrator-access/spec.md) | Публичное чтение, Authentik OIDC, группа, серверная cookie-сессия, CSRF и выход      |
-| [download-submission](specs/download-submission/spec.md)   | Создание по URL, нормализация, дубликаты и повтор удаленного результата              |
-| [download-lifecycle](specs/download-lifecycle/spec.md)     | Очередь, автомат этапов, история, повтор, отмена, удаление и восстановление          |
-| [media-processing](specs/media-processing/spec.md)         | Источники, качество, объединение без перекодирования и публикация                    |
-| [public-library](specs/public-library/spec.md)             | Все объекты bucket, плоский каталог, заголовки, потоковое скачивание и удаление      |
-| [file-uploads](specs/file-uploads/spec.md)                 | Произвольные локальные файлы администратора в той же библиотеке                      |
-| [web-interface](specs/web-interface/spec.md)               | Единая страница, карточки, честный прогресс, Material, адаптивность и EN/RU          |
-| [application-build](specs/application-build/spec.md)       | Структура, .NET/React, настройки и зависимости, publish, тестирование и документация |
-| [container-delivery](specs/container-delivery/spec.md)     | Volumes, конфигурация, PostgreSQL/MinIO, две архитектуры, CI и публикация GHCR       |
+| Capability                                                 | Содержание                                                                               |
+|------------------------------------------------------------|------------------------------------------------------------------------------------------|
+| [administrator-access](specs/administrator-access/spec.md) | Публичное чтение, Authentik OIDC, группа, серверная cookie-сессия, CSRF и выход          |
+| [download-submission](specs/download-submission/spec.md)   | Создание по URL, нормализация, дубликаты и повтор удаленного результата                  |
+| [download-lifecycle](specs/download-lifecycle/spec.md)     | Очередь, автомат этапов, история, повтор, отмена, удаление и восстановление              |
+| [media-processing](specs/media-processing/spec.md)         | Источники, качество, объединение без перекодирования и публикация                        |
+| [public-library](specs/public-library/spec.md)             | Все объекты bucket, плоский каталог, заголовки, потоковое скачивание и удаление          |
+| [file-uploads](specs/file-uploads/spec.md)                 | Произвольные локальные файлы администратора в той же библиотеке                          |
+| [web-interface](specs/web-interface/spec.md)               | Единая страница, карточки, честный прогресс, Material, адаптивность и EN/RU              |
+| [application-build](specs/application-build/spec.md)       | Структура, .NET/React, настройки и зависимости, publish, тестирование и документация     |
+| [container-delivery](specs/container-delivery/spec.md)     | Volumes, конфигурация, PostgreSQL/MinIO, две архитектуры, CI и публикация в реестр Gitea |
 
 Служебные заголовки `Purpose`, `Requirements`, `Requirement`, `Scenario` и шаги `WHEN`/`THEN` оставлены на английском
 для инструментов OpenSpec. Текст документации — на русском; `SHALL` обозначает обязательное требование. Основные спеки
