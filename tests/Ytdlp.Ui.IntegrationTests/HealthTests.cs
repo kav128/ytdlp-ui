@@ -106,7 +106,7 @@ public sealed class HealthTests : SetupBase
     [Test]
     public async Task ActualDatabaseConnectionFailureIsReadiness503AndLiveness200()
     {
-        await using var admin = new NpgsqlConnection(SetupGlobal.PostgreSql.GetConnectionString());
+        await using var admin = new NpgsqlConnection(SetupGlobal.PostgreSqlConnectionString);
         await admin.OpenAsync();
         var name = Factory.Database.Name;
         await using var disable = new NpgsqlCommand($"ALTER DATABASE \"{name}\" ALLOW_CONNECTIONS false", admin);

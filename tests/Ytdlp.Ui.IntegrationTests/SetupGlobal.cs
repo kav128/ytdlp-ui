@@ -1,3 +1,5 @@
+using Npgsql;
+
 namespace Ytdlp.Ui.IntegrationTests;
 
 [SetUpFixture]
@@ -11,6 +13,12 @@ public sealed class SetupGlobal
            .WithUsername("integration")
            .WithPassword("integration-password-only")
            .Build();
+
+    public static string PostgreSqlConnectionString =>
+        new NpgsqlConnectionStringBuilder(PostgreSql.GetConnectionString())
+        {
+            GssEncryptionMode = GssEncryptionMode.Disable
+        }.ConnectionString;
 
     public static string DirectoryPath { get; } = Path.Combine(
         Path.GetTempPath(),

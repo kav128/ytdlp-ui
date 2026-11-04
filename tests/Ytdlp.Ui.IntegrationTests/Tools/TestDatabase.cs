@@ -13,7 +13,7 @@ public sealed class TestDatabase : IDisposable
     {
         DirectoryPath = Path.Combine(SetupGlobal.DirectoryPath, Name);
 
-        var settings = new NpgsqlConnectionStringBuilder(SetupGlobal.PostgreSql.GetConnectionString())
+        var settings = new NpgsqlConnectionStringBuilder(SetupGlobal.PostgreSqlConnectionString)
         {
             Database = Name,
             Pooling = false,
@@ -26,7 +26,7 @@ public sealed class TestDatabase : IDisposable
 
         try
         {
-            using var connection = new NpgsqlConnection(SetupGlobal.PostgreSql.GetConnectionString());
+            using var connection = new NpgsqlConnection(SetupGlobal.PostgreSqlConnectionString);
             connection.Open();
             using var command = new NpgsqlCommand($"CREATE DATABASE \"{Name}\"", connection);
             command.ExecuteNonQuery();
@@ -47,7 +47,7 @@ public sealed class TestDatabase : IDisposable
 
         try
         {
-            using var connection = new NpgsqlConnection(SetupGlobal.PostgreSql.GetConnectionString());
+            using var connection = new NpgsqlConnection(SetupGlobal.PostgreSqlConnectionString);
             connection.Open();
             using var command = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{Name}\" WITH (FORCE)", connection);
             command.ExecuteNonQuery();
