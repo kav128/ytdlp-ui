@@ -20,12 +20,22 @@ jobs:
         with:
           global-json-file: global.json
       - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.19.0
-          mirror: https://nodejs.org/dist
-          cache: npm
-          cache-dependency-path: src/Ytdlp.Ui.Client/package-lock.json
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            aarch64) arch=arm64 ;;
+            x86_64) arch=x64 ;;
+            *) echo "Unsupported runner architecture" >&2; exit 1 ;;
+          esac
+          version=v24.19.0
+          archive="node-$version-linux-$arch.tar.xz"
+          directory="$(mktemp -d)"
+          cd "$directory"
+          curl --fail --silent --show-error --location --max-time 120 --remote-name "https://nodejs.org/dist/$version/$archive"
+          curl --fail --silent --show-error --location --max-time 30 --remote-name "https://nodejs.org/dist/$version/SHASUMS256.txt"
+          grep "  $archive\$" SHASUMS256.txt | sha256sum --check --strict
+          tar -xJf "$archive"
+          echo "$directory/node-$version-linux-$arch/bin" >> "$GITHUB_PATH"
       - name: Restore React dependencies
         run: npm ci --no-audit --no-fund
         working-directory: src/Ytdlp.Ui.Client
