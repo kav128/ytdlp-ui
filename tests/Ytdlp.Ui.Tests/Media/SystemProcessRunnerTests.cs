@@ -106,7 +106,22 @@ public sealed class SystemProcessRunnerTests
         try
         {
             using var child = Process.GetProcessById(pid);
-            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (OperatingSystem.IsLinux())
+            {
+                // A container's PID 1 may leave an exited child in the process table.
+                var elapsed = Stopwatch.StartNew();
+
+                while (!child.HasExited && !IsLinuxZombie(pid))
+                {
+                    Assert.That(elapsed.Elapsed, Is.LessThan(TimeSpan.FromSeconds(5)), "Child is still running.");
+                    await Task.Delay(25);
+                }
+            }
+            else
+            {
+                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
         catch (ArgumentException)
         {
@@ -115,6 +130,21 @@ public sealed class SystemProcessRunnerTests
         var length = File.Exists(marker) ? new FileInfo(marker).Length : 0;
         await Task.Delay(150);
         Assert.That(File.Exists(marker) ? new FileInfo(marker).Length : 0, Is.EqualTo(length));
+    }
+
+    private static bool IsLinuxZombie(int pid)
+    {
+        try
+        {
+            var stat = File.ReadAllText($"/proc/{pid}/stat");
+            var state = stat.LastIndexOf(')') + 2;
+
+            return state < stat.Length && stat[state] is 'Z' or 'X';
+        }
+        catch (IOException error) when (error is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return true;
+        }
     }
 
     [Test]
